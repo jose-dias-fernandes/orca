@@ -38,13 +38,26 @@ export type LinuxCgroupMemoryLimit = {
 
 type LinuxCgroupMemoryLimitReader = () => LinuxCgroupMemoryLimit | undefined
 
+type LinuxPseudoFileReader = (filePath: string) => string | undefined
+
 /** Absent is a normal answer here: hardened hosts, WSL and containers hide these. */
-export function readLinuxPseudoFile(filePath: string): string | undefined {
+function readLinuxPseudoFileFromDisk(filePath: string): string | undefined {
   try {
     return readFileSync(filePath, 'utf8')
   } catch {
     return undefined
   }
+}
+
+let pseudoFileReader: LinuxPseudoFileReader = readLinuxPseudoFileFromDisk
+
+/** The seam the sysfs resolution itself is tested through; PSI reads through it too. */
+export function setLinuxPseudoFileReaderForTest(next: LinuxPseudoFileReader | null): void {
+  pseudoFileReader = next ?? readLinuxPseudoFileFromDisk
+}
+
+export function readLinuxPseudoFile(filePath: string): string | undefined {
+  return pseudoFileReader(filePath)
 }
 
 /** The unified-hierarchy line is the one with an empty controller list. */

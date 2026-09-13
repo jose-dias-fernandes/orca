@@ -5,7 +5,10 @@ import {
   readLinuxMemoryPressureStall,
   setLinuxMemoryPressureStallReaderForTest
 } from './linux-memory-pressure-stall'
-import { setLinuxCgroupMemoryLimitReaderForTest } from './linux-cgroup-memory-limit'
+import {
+  setLinuxCgroupMemoryLimitReaderForTest,
+  setLinuxPseudoFileReaderForTest
+} from './linux-cgroup-memory-limit'
 import { getSystemMemoryDetails, setSystemMemoryInfoReaderForTest } from './system-memory-details'
 import {
   preGoneSystemMemoryDetails,
@@ -36,7 +39,52 @@ beforeEach(() => {
 afterEach(() => {
   setLinuxCgroupMemoryLimitReaderForTest(null)
   setLinuxMemoryPressureStallReaderForTest(null)
+  setLinuxPseudoFileReaderForTest(null)
   setSystemMemoryInfoReaderForTest(null)
+})
+
+/** Only the listed paths exist; anything else reads as an unreadable pseudo-file. */
+function fakeLinuxPseudoFiles(files: Record<string, string>): void {
+  setLinuxPseudoFileReaderForTest((filePath) => files[filePath])
+}
+
+const CALM_PRESSURE = 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n'
+
+// Below the reader seam: which files the procfs reader actually opens, and
+// whether an absent PSI stays absent instead of reading as a calm host.
+describe('reading PSI off procfs and the cgroup', () => {
+  it("reads the host file and the resolved cgroup's own memory.pressure", () => {
+    fakeLinuxPseudoFiles({
+      '/proc/self/cgroup': '0::/user.slice/orca.scope\n',
+      '/sys/fs/cgroup/user.slice/orca.scope/memory.current': '512\n',
+      '/proc/pressure/memory': PROC_PRESSURE_MEMORY,
+      '/sys/fs/cgroup/user.slice/orca.scope/memory.pressure':
+        'some avg10=71.20 avg60=60.00 avg300=20.00 total=1\nfull avg10=58.90 avg60=41.30 avg300=9.00 total=2\n'
+    })
+
+    expect(readLinuxMemoryPressureStall('linux')).toEqual({
+      host: { someAvg10: 61.4, someAvg60: 48.22, fullAvg10: 44.1, fullAvg60: 30.05 },
+      cgroup: { someAvg10: 71.2, someAvg60: 60, fullAvg10: 58.9, fullAvg60: 41.3 }
+    })
+  })
+
+  it('still reports the host file when the cgroup cannot be resolved', () => {
+    fakeLinuxPseudoFiles({ '/proc/pressure/memory': CALM_PRESSURE })
+
+    expect(readLinuxMemoryPressureStall('linux')).toEqual({
+      host: { someAvg10: 0, someAvg60: 0 },
+      cgroup: undefined
+    })
+  })
+
+  it('stays silent on a kernel built without CONFIG_PSI', () => {
+    fakeLinuxPseudoFiles({
+      '/proc/self/cgroup': '0::/user.slice/orca.scope\n',
+      '/sys/fs/cgroup/user.slice/orca.scope/memory.current': '512\n'
+    })
+
+    expect(readLinuxMemoryPressureStall('linux')).toBeUndefined()
+  })
 })
 
 describe('linux PSI memory stall', () => {

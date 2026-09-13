@@ -5,7 +5,9 @@ import {
   parseCgroupMemoryEvent,
   parseCgroupV2Path,
   readLinuxCgroupMemoryLimit,
-  setLinuxCgroupMemoryLimitReaderForTest
+  resolveCgroupV2MemoryDir,
+  setLinuxCgroupMemoryLimitReaderForTest,
+  setLinuxPseudoFileReaderForTest
 } from './linux-cgroup-memory-limit'
 import { setLinuxMemoryPressureStallReaderForTest } from './linux-memory-pressure-stall'
 import { getSystemMemoryDetails, setSystemMemoryInfoReaderForTest } from './system-memory-details'
@@ -33,7 +35,85 @@ beforeEach(() => {
 afterEach(() => {
   setLinuxCgroupMemoryLimitReaderForTest(null)
   setLinuxMemoryPressureStallReaderForTest(null)
+  setLinuxPseudoFileReaderForTest(null)
   setSystemMemoryInfoReaderForTest(null)
+})
+
+/** Only the listed paths exist; anything else reads as an unreadable pseudo-file. */
+function fakeLinuxPseudoFiles(files: Record<string, string>): void {
+  setLinuxPseudoFileReaderForTest((filePath) => files[filePath])
+}
+
+const SANDBOX_CGROUP_PATH = '0::/user.slice/user-1000.slice/app.slice/orca.scope\n'
+
+// Everything below the seam that the reader test double skips: which directory
+// the sysfs reads actually land in, and whether an unresolvable one stays quiet.
+describe('cgroup v2 memory directory resolution', () => {
+  it('reads the directory /proc/self/cgroup names when it exists', () => {
+    fakeLinuxPseudoFiles({
+      '/proc/self/cgroup': SANDBOX_CGROUP_PATH,
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.current': '512\n'
+    })
+
+    expect(resolveCgroupV2MemoryDir()).toBe(
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope'
+    )
+  })
+
+  it('falls back to the mount root, which is our own cgroup inside a namespace', () => {
+    // The sandbox case the header claims to cover: the reported path is a host
+    // path that does not exist in here, and the mount root IS our cgroup.
+    fakeLinuxPseudoFiles({
+      '/proc/self/cgroup': SANDBOX_CGROUP_PATH,
+      '/sys/fs/cgroup/memory.current': '900000000\n',
+      '/sys/fs/cgroup/memory.max': '1073741824\n'
+    })
+
+    expect(resolveCgroupV2MemoryDir()).toBe('/sys/fs/cgroup')
+    expect(readLinuxCgroupMemoryLimit('linux')).toMatchObject({
+      maxBytes: 1_073_741_824,
+      currentBytes: 900_000_000
+    })
+  })
+
+  it('claims nothing when neither candidate has memory.current', () => {
+    // A v1-only or hybrid host: the unified root exists but carries no memory
+    // controller, and the host root cgroup never has memory.current.
+    fakeLinuxPseudoFiles({ '/proc/self/cgroup': SANDBOX_CGROUP_PATH })
+
+    expect(resolveCgroupV2MemoryDir()).toBeUndefined()
+    expect(readLinuxCgroupMemoryLimit('linux')).toBeUndefined()
+  })
+
+  it('reads the ceiling, the throttle and the events off the resolved directory', () => {
+    fakeLinuxPseudoFiles({
+      '/proc/self/cgroup': SANDBOX_CGROUP_PATH,
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.current': '4200000000',
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.max': '4294967296',
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.high': 'max\n',
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.events':
+        'low 0\nhigh 7\nmax 2\noom 1\noom_kill 1\n'
+    })
+
+    expect(readLinuxCgroupMemoryLimit('linux')).toEqual({
+      maxBytes: 4_294_967_296,
+      // `max` is no ceiling, and must not surface as one just because it was read.
+      highBytes: undefined,
+      currentBytes: 4_200_000_000,
+      oomKillCount: 1,
+      maxEventCount: 2,
+      highEventCount: 7
+    })
+  })
+
+  it('says nothing rather than a row of undefineds when the files are garbage', () => {
+    fakeLinuxPseudoFiles({
+      '/proc/self/cgroup': SANDBOX_CGROUP_PATH,
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.current': 'max'
+    })
+
+    expect(readLinuxCgroupMemoryLimit('linux')).toBeUndefined()
+  })
 })
 
 describe('linux cgroup v2 memory limit', () => {

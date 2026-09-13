@@ -48,7 +48,13 @@ up to 10 s before it (see `pre-gone-host-memory.ts`).
 | `systemMemoryStall{Some,Full}Avg{10,60}Pct`          | `/proc/pressure/memory`        |
 | `systemMemoryCgroupStall{Some,Full}Avg{10,60}Pct`    | the cgroup's `memory.pressure` |
 
-An absent row means "could not measure", never "unlimited" or "calm". cgroup v1
+An absent row means "could not measure", never "calm" — with one exception to
+read carefully: `memory.max` and `memory.high` read the literal string `max`
+when no ceiling is set, and that is reported as an absent `CgroupMaxMB` /
+`CgroupHighMB`, not as a number. So the ceiling fields alone cannot separate "no
+ceiling" from "unreadable"; `systemMemoryCgroupCurrentMB` is the tell. Present
+means the cgroup was read and the missing ceiling really is unlimited; no
+`Cgroup*` field at all means nothing was measurable. cgroup v1
 is not read at all: its limit is not resolvable from `/proc/self/cgroup` without
 mount parsing, and a half-right ceiling is worse than none.
 
