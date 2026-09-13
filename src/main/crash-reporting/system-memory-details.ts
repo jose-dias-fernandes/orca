@@ -136,7 +136,7 @@ function cgroupCeilingBelowHostRam(details: CrashReportDetails): boolean {
   return total === undefined || lowest < total
 }
 
-/** The cgroup's own stall is what systemd-oomd reads; the host figure is the fallback. */
+/** Our own cgroup's stall is nearest the kill; a busy host with a calm cgroup is a sibling's. */
 function stallIsHigh(details: CrashReportDetails): boolean {
   const fullAvg10 =
     numericDetail(details, 'CgroupStallFullAvg10Pct') ?? numericDetail(details, 'StallFullAvg10Pct')

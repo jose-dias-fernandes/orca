@@ -162,6 +162,21 @@ describe('stall in linux crash memory details', () => {
     expect(getSystemMemoryDetails('linux').systemMemoryPressureSignal).toBe('mem-available-stalled')
   })
 
+  it('does not let a thrashing host label our own calm cgroup as stalled', () => {
+    setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+    // A sibling cgroup is the hog: the host stalls, we do not, and whatever
+    // killed us was not this. Taking the higher of the two would misname it.
+    setLinuxMemoryPressureStallReaderForTest(() => ({
+      host: { fullAvg10: 90 },
+      cgroup: { fullAvg10: 1.2 }
+    }))
+
+    const details = getSystemMemoryDetails('linux')
+
+    expect(details.systemMemoryStallFullAvg10Pct).toBe(90)
+    expect(details.systemMemoryPressureSignal).toBe('mem-available')
+  })
+
   it('lets a cgroup ceiling outrank stall, since it explains the stall as well', () => {
     setSystemMemoryInfoReaderForTest(() => ({ ...NO_HOST_PRESSURE, total: 32_000 * 1024 }))
     setLinuxCgroupMemoryLimitReaderForTest(() => ({ maxBytes: 2_147_483_648 }))
