@@ -2,9 +2,9 @@
 
 A Linux renderer that dies with `reason=killed exitCode=9` was sent `SIGKILL` by
 something. The crash report used to carry only `/proc/meminfo` — host-wide free
-memory and swap — which answers a question nobody asked. All three killers below
-can fire while `systemMemoryAvailableMB` is in the gigabytes and swap is
-untouched, so that field alone cannot name any of them.
+memory and swap — which answers a question nobody asked. Every killer below can
+fire while `systemMemoryAvailableMB` is in the gigabytes and swap is untouched,
+so that field alone cannot name any of them.
 
 Three v1.4.200 field reports are the worked examples, all on Arch:
 
@@ -14,10 +14,13 @@ Three v1.4.200 field reports are the worked examples, all on Arch:
 | `ad185d76` | Renderer exit 9. 6471 MB available, swap 31351/31351 — 100% free       |
 | `181e8e36` | Renderer exit 9, and a separate GPU exit 9 **9m 04.9s earlier**        |
 
-The kernel OOM killer does not fire with that much headroom. `181e8e36` is two
-single-process kills, not one whole-cgroup kill: the `process_gone_suppressed`
-GPU crumb is at `22:29:32.397Z` and the renderer report at `22:38:37.276Z`, so
-they are not co-timed and nothing links them beyond the host. And in all three
+That headroom falsifies the **host-wide** kernel OOM killer and nothing further:
+a cgroup-scoped one fires on our own `memory.max` with the machine's spare
+gigabytes untouched, and no field in these reports could see it — which is what
+check 1 below now reads. `181e8e36` is two single-process kills, not one
+whole-cgroup kill: the `process_gone_suppressed` GPU crumb is at
+`22:29:32.397Z` and the renderer report at `22:38:37.276Z`, so they are not
+co-timed and nothing links them beyond the host. And in all three
 Orca's **main** process survived and stayed the reporter — already up 43 m
 (`2ea53f9c`), 11 h (`ad185d76`) and 3 h 11 m (`181e8e36`) by
 `mainProcessStartedAt`, and `processMetricsBrowserCount: 1` in the post-death
@@ -30,13 +33,18 @@ is the gap these fields close — they are for **distinguishing** the killers
 below, not for ratifying one that was picked in advance. All three were closed
 unattributed.
 
-## The three killers
+## The killers
 
-| Killer            | Fires on                                         | Host free memory at the time |
-| ----------------- | ------------------------------------------------ | ---------------------------- |
-| Kernel OOM killer | An allocation that cannot be satisfied           | Near zero                    |
-| `systemd-oomd`    | PSI memory **stall**, sustained                  | Can be gigabytes             |
-| Something else    | A person, a supervisor, a sandbox, the OOM score | Anything                     |
+Splitting the kernel OOM killer by scope is the point: only the host-wide one is
+falsifiable from `/proc/meminfo`, and the cgroup-scoped one looks identical to an
+outside `kill -9` in every field the report used to carry.
+
+| Killer                           | Fires on                                         | Host free memory at the time |
+| -------------------------------- | ------------------------------------------------ | ---------------------------- |
+| Kernel OOM killer, host-wide     | An allocation the machine cannot satisfy         | Near zero                    |
+| Kernel OOM killer, in our cgroup | An allocation past our `memory.max`              | Can be gigabytes             |
+| `systemd-oomd`                   | PSI memory **stall**, sustained                  | Can be gigabytes             |
+| Something else                   | A person, a supervisor, a sandbox, the OOM score | Anything                     |
 
 `systemd-oomd` is default-enabled on Arch and Fedora. It watches a cgroup's
 `memory.pressure` and kills the **whole cgroup** when `full avg10` stays above
