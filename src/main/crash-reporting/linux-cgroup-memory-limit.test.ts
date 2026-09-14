@@ -274,6 +274,38 @@ describe('cgroup v2 memory directory resolution', () => {
       expect(details.systemMemoryCgroupCurrentMB).toBe(1_144)
       expect(details.systemMemoryCgroupCeilingCurrentMB).toBe(1_431)
     })
+
+    it("holds the ancestor's usage against a MemoryMax that undercuts our own MemoryHigh", () => {
+      // The mirror of the case above, and the only one that fixes WHICH of the
+      // two ceilings binds: everywhere else memory.high is the lower of the
+      // pair, so "the binding ceiling is always memory.high's" reads the same
+      // number. Here the hard cap is the slice's and the soft throttle is ours,
+      // so the usage to hold against it is the slice's — reading memory.high's
+      // level instead prints our own 858 MB, or nothing at all.
+      setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+      fakeLinuxPseudoFiles({
+        '/proc/self/cgroup': `0::${SCOPE.slice('/sys/fs/cgroup'.length)}\n`,
+        [`${SCOPE}/memory.current`]: '900000000\n',
+        [`${SCOPE}/memory.max`]: 'max\n',
+        [`${SCOPE}/memory.high`]: '6442450944\n',
+        [`${USER_SLICE}/memory.max`]: '2147483648\n',
+        [`${USER_SLICE}/memory.high`]: 'max\n',
+        [`${USER_SLICE}/memory.current`]: '2040000000\n'
+      })
+
+      expect(readLinuxCgroupMemoryLimit('linux')).toMatchObject({
+        maxBytes: 2_147_483_648,
+        highBytes: 6_442_450_944,
+        currentBytes: 900_000_000,
+        ceilingCurrentBytes: 2_040_000_000
+      })
+
+      const details = getSystemMemoryDetails('linux')
+
+      expect(details.systemMemoryCgroupCurrentMB).toBe(858)
+      expect(details.systemMemoryCgroupCeilingCurrentMB).toBe(1_945)
+      expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
+    })
   })
 
   // An absent `memory.max` means "uncapped" only over the levels we could read,
@@ -477,14 +509,18 @@ describe('cgroup-capped linux crash memory details', () => {
 
   it('keeps the plain label when the ceiling is not below host RAM', () => {
     setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
-    // A container whose memory.max was set to the whole machine: a ceiling, but
-    // not one that made the 20 GB beside it unreachable, so it explains nothing.
-    setLinuxCgroupMemoryLimitReaderForTest(() => ({ maxBytes: 32_005 * 1024 * 1024 }))
+    // A container whose memory.max was set at or above the whole machine: a
+    // ceiling, but not one that made the 20 GB beside it unreachable, so it
+    // explains nothing. Both sides of the boundary, because a comparison that
+    // rejects only the equal case still names a killer on the larger one.
+    for (const ceilingMB of [32_005, 49_152]) {
+      setLinuxCgroupMemoryLimitReaderForTest(() => ({ maxBytes: ceilingMB * 1024 * 1024 }))
 
-    const details = getSystemMemoryDetails('linux')
+      const details = getSystemMemoryDetails('linux')
 
-    expect(details.systemMemoryCgroupMaxMB).toBe(32_005)
-    expect(details.systemMemoryPressureSignal).toBe('mem-available')
+      expect(details.systemMemoryCgroupMaxMB).toBe(ceilingMB)
+      expect(details.systemMemoryPressureSignal).toBe('mem-available')
+    }
   })
 
   it('treats a ceiling as capping when the host total is unreadable', () => {
@@ -515,20 +551,28 @@ describe('cgroup-capped linux crash memory details', () => {
     expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
   })
 
-  it('takes the lower ceiling when a unit sets both MemoryHigh and MemoryMax', () => {
+  it('takes the lower ceiling whichever of MemoryHigh and MemoryMax it is', () => {
     setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
-    // The systemd pair: MemoryMax above host RAM is no ceiling at all, and only
-    // the MemoryHigh below it explains a kill with 20 GB "available" beside it.
-    setLinuxCgroupMemoryLimitReaderForTest(() => ({
-      maxBytes: 48 * 1024 * 1024 * 1024,
-      highBytes: 2 * 1024 * 1024 * 1024
-    }))
+    // The systemd pair, run both ways round: one of them sits above the host's
+    // 32005 MB and so caps nothing, and only the other explains a kill with
+    // 20 GB "available" beside it. Both orders, because with memory.high always
+    // the lower of the two, "take memory.high and ignore memory.max" is
+    // indistinguishable from taking the minimum.
+    for (const [maxMB, highMB] of [
+      [49_152, 2_048],
+      [2_048, 49_152]
+    ]) {
+      setLinuxCgroupMemoryLimitReaderForTest(() => ({
+        maxBytes: maxMB * 1024 * 1024,
+        highBytes: highMB * 1024 * 1024
+      }))
 
-    const details = getSystemMemoryDetails('linux')
+      const details = getSystemMemoryDetails('linux')
 
-    expect(details.systemMemoryCgroupMaxMB).toBe(49_152)
-    expect(details.systemMemoryCgroupHighMB).toBe(2_048)
-    expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
+      expect(details.systemMemoryCgroupMaxMB).toBe(maxMB)
+      expect(details.systemMemoryCgroupHighMB).toBe(highMB)
+      expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
+    }
   })
 
   it('adds nothing on a host with no v2 memory controller', () => {
