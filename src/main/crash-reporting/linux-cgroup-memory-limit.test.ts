@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   cgroupV2AncestorDirs,
@@ -441,6 +444,29 @@ describe('linux cgroup v2 memory limit', () => {
     setLinuxPseudoFileReaderForTest(null)
 
     expect(readLinuxPseudoFile('/proc/orca-no-such-directory/memory.max')).toBeUndefined()
+  })
+
+  it('reads back the text of the file it was handed, per path', () => {
+    // Every field on this branch comes out of one readFileSync, and the seam
+    // double stands in for it everywhere else — so deleting it, dropping the utf8
+    // encoding (a Buffer has no `.trim()`, and the swallow eats the TypeError) or
+    // ignoring the argument for one fixed path each leave the whole reading silent
+    // on real Linux with every other test green. Temp files, not /proc: macOS runs
+    // this suite too.
+    setLinuxPseudoFileReaderForTest(null)
+    const dir = mkdtempSync(join(tmpdir(), 'orca-cgroup-read-'))
+    try {
+      writeFileSync(join(dir, 'memory.max'), '2147483648\n')
+      writeFileSync(join(dir, 'memory.current'), '900000000\n')
+
+      expect(readLinuxPseudoFile(join(dir, 'memory.max'))).toBe('2147483648\n')
+      expect(readLinuxPseudoFile(join(dir, 'memory.current'))).toBe('900000000\n')
+      expect(parseCgroupMemoryBytes(readLinuxPseudoFile(join(dir, 'memory.max')))).toBe(
+        2_147_483_648
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('reads `max` as no limit rather than as a numeric ceiling', () => {
