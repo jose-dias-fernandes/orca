@@ -108,6 +108,40 @@ describe('cgroup v2 memory directory resolution', () => {
     })
   })
 
+  it('reads memory.high and its throttle counter off the resolved directory', () => {
+    // The systemd `MemoryHigh=` unit with no `MemoryMax=`: every other test gives
+    // memory.high `max` or an empty string, which is indistinguishable from never
+    // reading the file at all — so deleting the read, or pointing it at memory.low,
+    // stays green. This is the only case that pins the throttle ceiling and the
+    // `high` event counter from the sysfs file through to the report.
+    setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+    fakeLinuxPseudoFiles({
+      '/proc/self/cgroup': SANDBOX_CGROUP_PATH,
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.current': '2100000000',
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.max': 'max\n',
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.high': '2147483648\n',
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.events':
+        'low 0\nhigh 41\nmax 0\noom 0\noom_kill 0\n'
+    })
+
+    expect(readLinuxCgroupMemoryLimit('linux')).toEqual({
+      maxBytes: undefined,
+      highBytes: 2_147_483_648,
+      currentBytes: 2_100_000_000,
+      oomKillCount: 0,
+      maxEventCount: 0,
+      highEventCount: 41
+    })
+
+    const details = getSystemMemoryDetails('linux')
+
+    expect(details.systemMemoryCgroupHighMB).toBe(2_048)
+    expect(details.systemMemoryCgroupHighEventCount).toBe(41)
+    expect(details.systemMemoryCgroupMaxMB).toBeUndefined()
+    // Throttled 41 times against a 2 GB ceiling, with 20 GB "available" beside it.
+    expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
+  })
+
   it('does not turn a zero-length ceiling file into a 0 MB cap', () => {
     // A sandbox that stubs /sys/fs/cgroup with empty files: `Number('')` is 0, so
     // dropping the empty-string term ships a 0 MB ceiling and labels the report
