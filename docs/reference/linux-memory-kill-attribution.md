@@ -59,15 +59,16 @@ reported as zero when they are not. Each appears twice: once for the reading
 taken at process-gone, and once as `systemMemoryPreGone*` for the sample taken
 up to 10 s before it (see `pre-gone-host-memory.ts`).
 
-| Field                                                | Source                                            |
-| ---------------------------------------------------- | ------------------------------------------------- |
-| `systemMemoryCgroupMaxMB` / `HighMB`                 | lowest `memory.max` / `memory.high` in the chain  |
-| `systemMemoryCgroupCurrentMB`                        | our own cgroup's `memory.current`                 |
-| `systemMemoryCgroupCeilingCurrentMB`                 | `memory.current` where the binding ceiling is set |
-| `systemMemoryCgroupOomKillCount`                     | `memory.events` `oom_kill`                        |
-| `systemMemoryCgroupMaxEventCount` / `HighEventCount` | `memory.events` `max` / `high`                    |
-| `systemMemoryStall{Some,Full}Avg{10,60}Pct`          | `/proc/pressure/memory`                           |
-| `systemMemoryCgroupStall{Some,Full}Avg{10,60}Pct`    | the cgroup's `memory.pressure`                    |
+| Field                                                | Source                                             |
+| ---------------------------------------------------- | -------------------------------------------------- |
+| `systemMemoryCgroupMaxMB` / `HighMB`                 | lowest `memory.max` / `memory.high` in the chain   |
+| `systemMemoryCgroupCurrentMB`                        | our own cgroup's `memory.current`                  |
+| `systemMemoryCgroupCeilingCurrentMB`                 | `memory.current` where the binding ceiling is set  |
+| `systemMemoryCgroupOomKillCount`                     | `memory.events` `oom_kill`                         |
+| `systemMemoryCgroupMaxEventCount` / `HighEventCount` | `memory.events` `max` / `high`                     |
+| `systemMemoryCgroupChainReachesRoot`                 | whether the walked chain ended at the machine root |
+| `systemMemoryStall{Some,Full}Avg{10,60}Pct`          | `/proc/pressure/memory`                            |
+| `systemMemoryCgroupStall{Some,Full}Avg{10,60}Pct`    | the cgroup's `memory.pressure`                     |
 
 Both ceilings are read over **our cgroup and every visible ancestor**, lowest
 wins, because that is what the kernel enforces. A `snap set-quota --memory`
@@ -85,10 +86,20 @@ An absent row means "could not measure", never "calm" — with one exception to
 read carefully: `memory.max` and `memory.high` read the literal string `max`
 when no ceiling is set, and that is reported as an absent `CgroupMaxMB` /
 `CgroupHighMB`, not as a number. So the ceiling fields alone cannot separate "no
-ceiling" from "unreadable"; `systemMemoryCgroupCurrentMB` is the tell. Present
-means the chain was read and the missing ceiling really is unlimited — over the
-ancestors too, not only our own unit; no `Cgroup*` field at all means nothing was
-measurable. cgroup v1 is not read at all: its limit is not resolvable from
+ceiling" from "unreadable", and it takes two fields to close that:
+
+- `systemMemoryCgroupCurrentMB` present means our own cgroup was resolved and
+  read, so the missing ceiling really is unlimited **at the levels we could
+  see**. No `Cgroup*` field at all means nothing was measurable.
+- `systemMemoryCgroupChainReachesRoot` says how far "the levels we could see"
+  went. `true` means the walk ended at the machine's own root cgroup, so an
+  absent ceiling is absent over every ancestor. `false` means the cgroup mount
+  root is itself a cgroup — we are inside a cgroup namespace — and a
+  `memory.max` on the pod cgroup or on the slice hosting the container is
+  enforced on us and **unreadable from in here**. An absent ceiling beside a
+  `false` never clears check 2 below.
+
+cgroup v1 is not read at all: its limit is not resolvable from
 `/proc/self/cgroup` without mount parsing, and a half-right ceiling is worse than
 none.
 
@@ -106,7 +117,12 @@ Read the pre-gone and gone-time pair, in this order.
    to us. This is the answer for a systemd unit with `MemoryMax`, a Flatpak or
    snap sandbox, or a container. Hold it against `CgroupCeilingCurrentMB` where
    that field is present: the ceiling is then an ancestor slice's, and our own
-   `CgroupCurrentMB` can sit far below it while the slice is at its limit.
+   `CgroupCurrentMB` can sit far below it while the slice is at its limit. No
+   ceiling clears this check only when `systemMemoryCgroupChainReachesRoot` is
+   `true`; on a `false` the binding ceiling may sit above the namespace root,
+   where nothing in the report can see it, and check 1 is then the only reading
+   that still catches a hard cap (the kernel credits the OOM kill to our own
+   cgroup whichever level's limit fired).
 3. **Was `systemMemoryPreGoneCgroupStallFullAvg10Pct` high with memory free?**
    That is the `systemd-oomd` signature, not yet a verdict. Read the **pre-gone**
    value: PSI decays, and the gone-time reading is taken after the corpse
@@ -151,6 +167,8 @@ raw fields stay readable whatever the label says.
   and `memory.*` reads. Probes both the path from `/proc/self/cgroup` and the
   mount root, because a cgroup namespace mounts our own cgroup at the root, then
   walks that cgroup's ancestors for the ceiling the kernel actually enforces.
+  `memory.current` exists on non-root cgroups only, so a readable one at the
+  mount root is what marks that walk as namespace-bounded.
 - `src/main/crash-reporting/linux-memory-pressure-stall.ts` — PSI parsing.
 - `src/main/crash-reporting/system-memory-details.ts` — field naming and label.
 

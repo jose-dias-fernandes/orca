@@ -46,6 +46,13 @@ export type LinuxCgroupMemoryLimit = {
   maxEventCount?: number
   /** Times usage was throttled against `memory.high` at our level. */
   highEventCount?: number
+  /**
+   * Whether the walked chain ended at the machine's real root cgroup, so an
+   * absent ceiling means uncapped over every ancestor and not merely over the
+   * ones we could see. False inside a cgroup namespace, where the mount root is
+   * our own cgroup and a pod or slice ceiling above it is unreadable from here.
+   */
+  chainReachesRoot?: boolean
 }
 
 /** One cgroup's ceiling, kept with its directory so the binding level can be read back. */
@@ -176,6 +183,24 @@ function lowerCeiling(
   return a.bytes <= b.bytes ? a : b
 }
 
+/**
+ * Whether the walked chain really ends at the machine's root cgroup.
+ *
+ * Why it has to be reported: an absent `memory.max` means "no ceiling" only over
+ * the levels we could see, and inside a cgroup namespace that is our own cgroup
+ * and nothing above it — a Kubernetes pod cgroup or a `MemoryMax=` on the slice
+ * hosting the container is enforced on us and unreadable from in here. Without
+ * this flag an absent ceiling reads as "uncapped" on exactly the sandboxes the
+ * ancestor walk exists for.
+ *
+ * `memory.current` exists on non-root cgroups only, so a readable one at the
+ * mount root means the mount root is a cgroup — i.e. a namespace root, not the
+ * machine's.
+ */
+function cgroupV2ChainReachesRoot(): boolean {
+  return readLinuxPseudoFile(`${CGROUP_V2_MOUNT}/memory.current`) === undefined
+}
+
 function readLinuxCgroupMemoryLimitFromSysfs(): LinuxCgroupMemoryLimit | undefined {
   const dir = resolveCgroupV2MemoryDir()
   if (dir === undefined) {
@@ -187,7 +212,7 @@ function readLinuxCgroupMemoryLimitFromSysfs(): LinuxCgroupMemoryLimit | undefin
   const max = bindingCgroupCeiling(chain, 'memory.max')
   const high = bindingCgroupCeiling(chain, 'memory.high')
   const binding = lowerCeiling(max, high)
-  const limit: LinuxCgroupMemoryLimit = {
+  const measured: LinuxCgroupMemoryLimit = {
     maxBytes: max?.bytes,
     highBytes: high?.bytes,
     currentBytes: parseCgroupMemoryBytes(readLinuxPseudoFile(`${dir}/memory.current`)),
@@ -202,8 +227,13 @@ function readLinuxCgroupMemoryLimitFromSysfs(): LinuxCgroupMemoryLimit | undefin
     highEventCount: parseCgroupMemoryEvent(events, 'high')
   }
   // Nothing readable means no v2 memory controller here; say nothing rather
-  // than ship a row of undefineds that reads as "measured, and unlimited".
-  return Object.values(limit).some((value) => value !== undefined) ? limit : undefined
+  // than ship a row of undefineds that reads as "measured, and unlimited". The
+  // chain flag is excluded because it always resolves, and on its own it
+  // measures nothing about this host's memory.
+  if (!Object.values(measured).some((value) => value !== undefined)) {
+    return undefined
+  }
+  return { ...measured, chainReachesRoot: cgroupV2ChainReachesRoot() }
 }
 
 let reader: LinuxCgroupMemoryLimitReader = readLinuxCgroupMemoryLimitFromSysfs

@@ -74,7 +74,10 @@ describe('cgroup v2 memory directory resolution', () => {
     expect(resolveCgroupV2MemoryDir()).toBe('/sys/fs/cgroup')
     expect(readLinuxCgroupMemoryLimit('linux')).toMatchObject({
       maxBytes: 1_073_741_824,
-      currentBytes: 900_000_000
+      currentBytes: 900_000_000,
+      // The mount root answers memory.current, which only a non-root cgroup does:
+      // we are inside a namespace and anything above it is unreadable from here.
+      chainReachesRoot: false
     })
   })
 
@@ -108,7 +111,10 @@ describe('cgroup v2 memory directory resolution', () => {
       ceilingCurrentBytes: undefined,
       oomKillCount: 1,
       maxEventCount: 2,
-      highEventCount: 7
+      highEventCount: 7,
+      // No memory.current at the mount root, so it is the machine's own root
+      // cgroup and nothing above our chain is hidden.
+      chainReachesRoot: true
     })
   })
 
@@ -135,7 +141,8 @@ describe('cgroup v2 memory directory resolution', () => {
       ceilingCurrentBytes: undefined,
       oomKillCount: 0,
       maxEventCount: 0,
-      highEventCount: 41
+      highEventCount: 41,
+      chainReachesRoot: true
     })
 
     const details = getSystemMemoryDetails('linux')
@@ -269,6 +276,66 @@ describe('cgroup v2 memory directory resolution', () => {
     })
   })
 
+  // An absent `memory.max` means "uncapped" only over the levels we could read,
+  // and inside a cgroup namespace that is our own cgroup and nothing above it.
+  // Without this flag the report cannot tell a fully walked chain from a
+  // one-level one, so a pod or slice ceiling above the namespace root reads as
+  // "no cgroup ceiling" — clearing the very check meant to catch it.
+  describe('whether the walked chain reaches the machine root cgroup', () => {
+    it('says the chain stops short when the mount root is a namespace root', () => {
+      setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+      // A container: our cgroup is a child of the mount root, which answers
+      // memory.current and so is itself a cgroup. Every visible level reads
+      // `max`, while the ceiling that binds us sits on the pod cgroup ABOVE the
+      // namespace root, where nothing in here can read it.
+      fakeLinuxPseudoFiles({
+        '/proc/self/cgroup': '0::/init.scope\n',
+        '/sys/fs/cgroup/init.scope/memory.current': '2000000000\n',
+        '/sys/fs/cgroup/init.scope/memory.max': 'max\n',
+        // Deliberately memory.current and NOT memory.max: probing the wrong file
+        // at the mount root reads this namespace root as the machine's own.
+        '/sys/fs/cgroup/memory.current': '2100000000\n'
+      })
+
+      expect(readLinuxCgroupMemoryLimit('linux')).toMatchObject({
+        maxBytes: undefined,
+        currentBytes: 2_000_000_000,
+        chainReachesRoot: false
+      })
+
+      const details = getSystemMemoryDetails('linux')
+
+      expect(details.systemMemoryCgroupMaxMB).toBeUndefined()
+      expect(details.systemMemoryCgroupChainReachesRoot).toBe(false)
+      // The label stays plain — the flag is what stops that being read as proof
+      // there is no ceiling.
+      expect(details.systemMemoryPressureSignal).toBe('mem-available')
+    })
+
+    it('says the chain is complete when the mount root is the machine root', () => {
+      setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+      // A native host: the root cgroup has no memory.current, so an absent
+      // ceiling really is absent all the way up.
+      fakeLinuxPseudoFiles({
+        '/proc/self/cgroup': SANDBOX_CGROUP_PATH,
+        '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.current': '512\n'
+      })
+
+      expect(readLinuxCgroupMemoryLimit('linux')).toMatchObject({ chainReachesRoot: true })
+      expect(getSystemMemoryDetails('linux').systemMemoryCgroupChainReachesRoot).toBe(true)
+    })
+
+    it('never lets the flag alone stand in for a reading', () => {
+      // The flag always resolves, so counting it as a measured field would ship a
+      // Cgroup row on every Linux host that has no v2 memory controller at all.
+      fakeLinuxPseudoFiles({ '/proc/self/cgroup': SANDBOX_CGROUP_PATH })
+      setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+
+      expect(readLinuxCgroupMemoryLimit('linux')).toBeUndefined()
+      expect(getSystemMemoryDetails('linux').systemMemoryCgroupChainReachesRoot).toBeUndefined()
+    })
+  })
+
   it('does not turn a zero-length ceiling file into a 0 MB cap', () => {
     // A sandbox that stubs /sys/fs/cgroup with empty files: `Number('')` is 0, so
     // dropping the empty-string term ships a 0 MB ceiling and labels the report
@@ -289,7 +356,8 @@ describe('cgroup v2 memory directory resolution', () => {
       ceilingCurrentBytes: undefined,
       oomKillCount: undefined,
       maxEventCount: undefined,
-      highEventCount: undefined
+      highEventCount: undefined,
+      chainReachesRoot: true
     })
 
     const details = getSystemMemoryDetails('linux')

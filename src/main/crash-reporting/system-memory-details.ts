@@ -178,12 +178,19 @@ function addHostMemoryDetails(
   }
 }
 
+/** The numeric members only — the chain flag is a boolean and ships on its own. */
+type LinuxCgroupMemoryNumberField = {
+  [K in keyof LinuxCgroupMemoryLimit]-?: NonNullable<LinuxCgroupMemoryLimit[K]> extends number
+    ? K
+    : never
+}[keyof LinuxCgroupMemoryLimit]
+
 function addLinuxCgroupMemoryDetails(details: CrashReportDetails, platform: NodeJS.Platform): void {
   const cgroup = readLinuxCgroupMemoryLimit(platform)
   if (!cgroup) {
     return
   }
-  const byteFields: readonly [keyof LinuxCgroupMemoryLimit, string][] = [
+  const byteFields: readonly [LinuxCgroupMemoryNumberField, string][] = [
     ['maxBytes', 'CgroupMaxMB'],
     ['highBytes', 'CgroupHighMB'],
     ['currentBytes', 'CgroupCurrentMB'],
@@ -195,7 +202,7 @@ function addLinuxCgroupMemoryDetails(details: CrashReportDetails, platform: Node
       details[`${SYSTEM_MEMORY_KEY_PREFIX}${suffix}`] = mb
     }
   }
-  const countFields: readonly [keyof LinuxCgroupMemoryLimit, string][] = [
+  const countFields: readonly [LinuxCgroupMemoryNumberField, string][] = [
     ['oomKillCount', 'CgroupOomKillCount'],
     ['maxEventCount', 'CgroupMaxEventCount'],
     ['highEventCount', 'CgroupHighEventCount']
@@ -205,6 +212,11 @@ function addLinuxCgroupMemoryDetails(details: CrashReportDetails, platform: Node
     if (count !== undefined) {
       details[`${SYSTEM_MEMORY_KEY_PREFIX}${suffix}`] = count
     }
+  }
+  // Without this an absent ceiling reads as "uncapped" even when the chain we
+  // walked stopped at a namespace root and the binding ceiling is above it.
+  if (cgroup.chainReachesRoot !== undefined) {
+    details[`${SYSTEM_MEMORY_KEY_PREFIX}CgroupChainReachesRoot`] = cgroup.chainReachesRoot
   }
 }
 
