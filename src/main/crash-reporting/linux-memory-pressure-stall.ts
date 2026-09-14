@@ -6,6 +6,9 @@ import { readLinuxPseudoFile, resolveCgroupV2MemoryDir } from './linux-cgroup-me
 // STALL, never on free memory. Three v1.4.200 field SIGKILLs (2ea53f9c,
 // ad185d76, 181e8e36) all showed ~100% free swap and gigabytes of MemAvailable,
 // so nothing in the report separated oomd from a kernel OOM or an outside kill.
+// oomd stays a CANDIDATE for those three, not the finding: its whole-cgroup
+// scope sits badly with a main process that survived all three, and this reading
+// exists to settle that either way (docs/reference/linux-memory-kill-attribution.md).
 //
 // avgN is the percentage of the last N seconds tasks spent stalled on memory:
 // `some` = at least one task, `full` = every task, which is the one oomd watches

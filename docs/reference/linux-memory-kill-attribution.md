@@ -6,17 +6,27 @@ memory and swap — which answers a question nobody asked. All three killers bel
 can fire while `systemMemoryAvailableMB` is in the gigabytes and swap is
 untouched, so that field alone cannot name any of them.
 
-Three v1.4.200 field reports are the worked examples:
+Three v1.4.200 field reports are the worked examples, all on Arch:
 
-| Report     | What it showed                                                                  |
-| ---------- | ------------------------------------------------------------------------------- |
-| `2ea53f9c` | Lone renderer exit 9. 20518 MB available, swap 64009/64009 — 100% free          |
-| `ad185d76` | Renderer exit 9. 6471 MB available, swap 31351/31351 — 100% free                |
-| `181e8e36` | Renderer exit 9 **and** a `process_gone_suppressed` GPU exit 9 in the same tree |
+| Report     | What it showed                                                         |
+| ---------- | ---------------------------------------------------------------------- |
+| `2ea53f9c` | Lone renderer exit 9. 20518 MB available, swap 64009/64009 — 100% free |
+| `ad185d76` | Renderer exit 9. 6471 MB available, swap 31351/31351 — 100% free       |
+| `181e8e36` | Renderer exit 9, and a separate GPU exit 9 **9m 04.9s earlier**        |
 
-The kernel OOM killer does not fire with that much headroom. Two processes in
-one tree dying together (`181e8e36`) is a whole-cgroup kill, not a per-process
-one. None of that was provable from the report, so all three were closed
+The kernel OOM killer does not fire with that much headroom. `181e8e36` is two
+single-process kills, not one whole-cgroup kill: the `process_gone_suppressed`
+GPU crumb is at `22:29:32.397Z` and the renderer report at `22:38:37.276Z`, so
+they are not co-timed and nothing links them beyond the host. And in all three
+Orca's **main** process survived and stayed the reporter — `mainProcessStartedAt`
+hours earlier, `processMetricsBrowserCount: 1` in the post-death sample — which
+is not what a whole-cgroup kill leaves behind.
+
+That last point is why `systemd-oomd` is a candidate here and not a conclusion:
+it kills the whole cgroup, and the surviving main process argues against it for
+these three. Nothing in the report could confirm or exclude it either way, which
+is the gap these fields close — they are for **distinguishing** the killers
+below, not for ratifying one that was picked in advance. All three were closed
 unattributed.
 
 ## The three killers
@@ -72,13 +82,20 @@ Read the pre-gone and gone-time pair, in this order.
    to us. This is the answer for a systemd unit with `MemoryMax`, a Flatpak or
    snap sandbox, or a container.
 3. **Was `systemMemoryPreGoneCgroupStallFullAvg10Pct` high with memory free?**
-   That is `systemd-oomd`. Read the **pre-gone** value: PSI decays, and the
-   gone-time reading is taken after the corpse released its pages, so it
-   routinely understates the stall that caused the kill. Corroborate with
+   That is the `systemd-oomd` signature, not yet a verdict. Read the **pre-gone**
+   value: PSI decays, and the gone-time reading is taken after the corpse
+   released its pages, so it routinely understates the stall that caused the
+   kill. Then cross-check the scope: oomd kills the **whole cgroup**, so a
+   surviving main process (`processMetricsBrowserCount: 1` after the death) is
+   evidence against it however high the stall reads. Corroborate with
    `journalctl -u systemd-oomd` on the reporting host if it is reachable.
 4. **All three quiet, plenty of memory, and a sibling process also exit 9?**
-   Whole-tree kill from outside: a supervisor, a session teardown, `pkill`. Do
-   not spend the investigation on memory.
+   Only co-timed sibling deaths — seconds apart, not minutes — indicate a
+   whole-tree kill from outside: a supervisor, a session teardown, `pkill`.
+   Compare the crumb timestamps before concluding it: two exit 9s minutes apart
+   in one session (`181e8e36`: 9m 04.9s) are two separate single-process kills,
+   and each still has to be attributed on its own. Where the deaths really are
+   co-timed, do not spend the investigation on memory.
 
 ## The summary label
 

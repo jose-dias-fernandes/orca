@@ -212,6 +212,21 @@ describe('cgroup-capped linux crash memory details', () => {
     expect(details.systemMemoryPressureSignal).toBe('mem-available')
   })
 
+  it('treats a ceiling as capping when the host total is unreadable', () => {
+    // MemTotal missing but MemAvailable present: the comparison that would clear
+    // this ceiling cannot be made, so the ceiling must not be waved through. The
+    // value is deliberately huge — nothing but the unknown-total term can cap it.
+    const { total: _total, ...noTotal } = NO_HOST_PRESSURE
+    setSystemMemoryInfoReaderForTest(() => noTotal)
+    setLinuxCgroupMemoryLimitReaderForTest(() => ({ maxBytes: 512 * 1024 * 1024 * 1024 }))
+
+    const details = getSystemMemoryDetails('linux')
+
+    expect(details.systemMemoryTotalMB).toBeUndefined()
+    expect(details.systemMemoryCgroupMaxMB).toBe(524_288)
+    expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
+  })
+
   it('caps on memory.high alone, which throttles us long before memory.max would', () => {
     setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
     setLinuxCgroupMemoryLimitReaderForTest(() => ({

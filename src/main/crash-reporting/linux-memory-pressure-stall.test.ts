@@ -16,9 +16,10 @@ import {
   samplePreGoneSystemMemory
 } from './pre-gone-host-memory'
 
-// Field report 181e8e36: renderer AND GPU process both reason=killed exitCode=9,
-// with 9668 MB available and swap all but untouched. Only the numbers the report
-// actually carries are fixed here.
+// Field report 181e8e36: renderer reason=killed exitCode=9 with 9668 MB
+// available and swap all but untouched. (A GPU exit 9 sits 9m 04.9s earlier in
+// the same session — a separate kill, not a co-timed whole-cgroup one.) Only the
+// numbers the report actually carries are fixed here.
 const NO_HOST_PRESSURE = {
   available: 9_668 * 1024,
   swapTotal: 31_471 * 1024,
