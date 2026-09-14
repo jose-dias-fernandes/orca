@@ -92,7 +92,9 @@ describe('cgroup v2 memory directory resolution', () => {
       '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.max': '4294967296',
       '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.high': 'max\n',
       '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.events':
-        'low 0\nhigh 7\nmax 2\noom 1\noom_kill 1\n'
+        // `oom` deliberately differs from `oom_kill`: reading the wrong one here
+        // would report a cgroup that went OOM without killing anything.
+        'low 0\nhigh 7\nmax 2\noom 5\noom_kill 1\n'
     })
 
     expect(readLinuxCgroupMemoryLimit('linux')).toEqual({
@@ -176,11 +178,14 @@ describe('linux cgroup v2 memory limit', () => {
   })
 
   it('pulls oom_kill out of memory.events', () => {
-    const events = 'low 0\nhigh 12\nmax 3\noom 1\noom_kill 1\noom_group_kill 0\n'
+    // A cgroup can go OOM and reclaim without killing anything, so `oom` runs
+    // ahead of `oom_kill` on a real host and only the latter attributes a death.
+    const events = 'low 0\nhigh 12\nmax 3\noom 5\noom_kill 1\noom_group_kill 0\n'
     expect(parseCgroupMemoryEvent(events, 'oom_kill')).toBe(1)
+    expect(parseCgroupMemoryEvent(events, 'oom')).toBe(5)
     expect(parseCgroupMemoryEvent(events, 'high')).toBe(12)
-    // `oom` must not answer for `oom_kill`: only the latter means a task died.
-    expect(parseCgroupMemoryEvent('low 0\nhigh 0\n', 'oom_kill')).toBeUndefined()
+    // A prefix or substring match would answer `oom_kill` with `oom`'s count.
+    expect(parseCgroupMemoryEvent('low 0\nhigh 0\noom 5\n', 'oom_kill')).toBeUndefined()
   })
 
   it('stays silent off Linux', () => {
