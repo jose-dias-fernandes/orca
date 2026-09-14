@@ -105,6 +105,13 @@ describe('linux PSI memory stall', () => {
     })
   })
 
+  it('drops a field the kernel did not print as a number, keeping the rest', () => {
+    // A truncated or unexpected line must not become a NaN masquerading as a reading.
+    expect(parseMemoryPressureStall('some avg10=n/a avg60=1.5 avg300=0.00\n')).toEqual({
+      someAvg60: 1.5
+    })
+  })
+
   it('says nothing rather than zero when PSI is not compiled in', () => {
     expect(parseMemoryPressureStall(undefined)).toBeUndefined()
     expect(parseMemoryPressureStall('')).toBeUndefined()
@@ -131,15 +138,22 @@ describe('stall in linux crash memory details', () => {
     setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
     setLinuxMemoryPressureStallReaderForTest(() => ({
       host: parseMemoryPressureStall(PROC_PRESSURE_MEMORY),
-      cgroup: { someAvg10: 71.2, fullAvg10: 58.9, fullAvg60: 41.3 }
+      cgroup: { someAvg10: 71.2, someAvg60: 60, fullAvg10: 58.9, fullAvg60: 41.3 }
     }))
 
     const details = getSystemMemoryDetails('linux')
 
     expect(details.systemMemoryAvailableMB).toBe(9_668)
+    // All four windows of both scopes, each a distinct number: any pair that swaps
+    // suffixes, and any row dropped from the mapping, lands on a different value.
     expect(details.systemMemoryStallSomeAvg10Pct).toBe(61.4)
+    expect(details.systemMemoryStallSomeAvg60Pct).toBe(48.22)
+    expect(details.systemMemoryStallFullAvg10Pct).toBe(44.1)
     expect(details.systemMemoryStallFullAvg60Pct).toBe(30.05)
+    expect(details.systemMemoryCgroupStallSomeAvg10Pct).toBe(71.2)
+    expect(details.systemMemoryCgroupStallSomeAvg60Pct).toBe(60)
     expect(details.systemMemoryCgroupStallFullAvg10Pct).toBe(58.9)
+    expect(details.systemMemoryCgroupStallFullAvg60Pct).toBe(41.3)
     // 9.4 GB free and swap untouched: without PSI this report reads as "not memory".
     expect(details.systemMemoryPressureSignal).toBe('mem-available-stalled')
   })
@@ -151,6 +165,21 @@ describe('stall in linux crash memory details', () => {
     }))
 
     expect(getSystemMemoryDetails('linux').systemMemoryPressureSignal).toBe('mem-available')
+  })
+
+  // Why literals and not the constant: the boundary case above moves with whatever
+  // the constant says, so it holds at 5% or 50% alike. These two fix the number
+  // itself — a threshold low enough to fire on an ordinary reclaim burst would
+  // name systemd-oomd on hosts it never touched.
+  it('pins the threshold to 30%, not merely to itself', () => {
+    setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+    for (const [fullAvg10, expected] of [
+      [29.9, 'mem-available'],
+      [30, 'mem-available-stalled']
+    ] as const) {
+      setLinuxMemoryPressureStallReaderForTest(() => ({ cgroup: { fullAvg10 } }))
+      expect(getSystemMemoryDetails('linux').systemMemoryPressureSignal).toBe(expected)
+    }
   })
 
   it('prefers the cgroup stall, which is the figure systemd-oomd acts on', () => {

@@ -16,6 +16,10 @@ import { readFileSync } from 'node:fs'
 // shows it unchanged rules the cgroup out, leaving systemd-oomd or an external
 // kill (see docs/reference/linux-memory-kill-attribution.md).
 //
+// The ceilings are read over our cgroup AND its ancestors, because the kernel
+// enforces the minimum of that chain: a snap quota slice or a `MemoryMax=` on
+// `user.slice` sits above the unit we run in, and our own file still reads `max`.
+//
 // v1 is deliberately unsupported: its hierarchy is per-controller and its limit
 // is unreadable from `/proc/self/cgroup` alone without mount parsing, and a
 // half-right limit is worse than an absent one here.
@@ -24,17 +28,28 @@ const CGROUP_V2_MOUNT = '/sys/fs/cgroup'
 const BYTES_PER_MB = 1024 * 1024
 
 export type LinuxCgroupMemoryLimit = {
-  /** Bytes, or undefined when the file reads `max` (no limit). */
+  /**
+   * Lowest `memory.max` over this cgroup AND every visible ancestor, in bytes;
+   * undefined when none of them sets one. The kernel enforces the minimum of the
+   * chain, so our own file reading `max` does not mean we are uncapped.
+   */
   maxBytes?: number
+  /** Same, for `memory.high`: an ancestor over its high throttles us too. */
   highBytes?: number
+  /** OUR cgroup's usage, which is only our share when the ceiling is an ancestor's. */
   currentBytes?: number
+  /** Usage at the ancestor owning the binding ceiling; absent when that ceiling is our own. */
+  ceilingCurrentBytes?: number
   /** Kernel OOM kills of a task in this cgroup or below it, since its creation. */
   oomKillCount?: number
-  /** Times usage would have exceeded `memory.max`. */
+  /** Times usage would have exceeded `memory.max` AT OUR LEVEL (see `ceilingCurrentBytes`). */
   maxEventCount?: number
-  /** Times usage was throttled against `memory.high`. */
+  /** Times usage was throttled against `memory.high` at our level. */
   highEventCount?: number
 }
+
+/** One cgroup's ceiling, kept with its directory so the binding level can be read back. */
+type CgroupCeiling = { bytes: number; dir: string }
 
 type LinuxCgroupMemoryLimitReader = () => LinuxCgroupMemoryLimit | undefined
 
@@ -117,6 +132,50 @@ export function parseCgroupMemoryEvent(raw: string | undefined, key: string): nu
   return undefined
 }
 
+/**
+ * Our cgroup and every ancestor up to the mount root, nearest first.
+ *
+ * Why the whole chain and not just ours: `memory.max` and `memory.high` are
+ * enforced as the MINIMUM over it, so a snap quota slice, a `MemoryMax=` on
+ * `user.slice`, or a Kubernetes pod cgroup caps us while our own file still
+ * reads `max`. Reading only our level reports "no ceiling" on exactly the
+ * sandboxes this module was written for.
+ */
+export function cgroupV2AncestorDirs(dir: string): string[] {
+  if (dir !== CGROUP_V2_MOUNT && !dir.startsWith(`${CGROUP_V2_MOUNT}/`)) {
+    return [dir]
+  }
+  const dirs = [dir]
+  // Stops at the mount root: above it is the host's, or nothing inside a namespace.
+  for (let current = dir; current !== CGROUP_V2_MOUNT;) {
+    current = current.slice(0, current.lastIndexOf('/'))
+    dirs.push(current)
+  }
+  return dirs
+}
+
+/** The lowest of a ceiling file over the chain — what the kernel actually enforces. */
+function bindingCgroupCeiling(dirs: readonly string[], file: string): CgroupCeiling | undefined {
+  let lowest: CgroupCeiling | undefined
+  for (const dir of dirs) {
+    const bytes = parseCgroupMemoryBytes(readLinuxPseudoFile(`${dir}/${file}`))
+    if (bytes !== undefined && (lowest === undefined || bytes < lowest.bytes)) {
+      lowest = { bytes, dir }
+    }
+  }
+  return lowest
+}
+
+function lowerCeiling(
+  a: CgroupCeiling | undefined,
+  b: CgroupCeiling | undefined
+): CgroupCeiling | undefined {
+  if (a === undefined || b === undefined) {
+    return a ?? b
+  }
+  return a.bytes <= b.bytes ? a : b
+}
+
 function readLinuxCgroupMemoryLimitFromSysfs(): LinuxCgroupMemoryLimit | undefined {
   const dir = resolveCgroupV2MemoryDir()
   if (dir === undefined) {
@@ -124,10 +183,20 @@ function readLinuxCgroupMemoryLimitFromSysfs(): LinuxCgroupMemoryLimit | undefin
   }
   // memory.events is hierarchical, so a renderer in a descendant cgroup still counts.
   const events = readLinuxPseudoFile(`${dir}/memory.events`)
+  const chain = cgroupV2AncestorDirs(dir)
+  const max = bindingCgroupCeiling(chain, 'memory.max')
+  const high = bindingCgroupCeiling(chain, 'memory.high')
+  const binding = lowerCeiling(max, high)
   const limit: LinuxCgroupMemoryLimit = {
-    maxBytes: parseCgroupMemoryBytes(readLinuxPseudoFile(`${dir}/memory.max`)),
-    highBytes: parseCgroupMemoryBytes(readLinuxPseudoFile(`${dir}/memory.high`)),
+    maxBytes: max?.bytes,
+    highBytes: high?.bytes,
     currentBytes: parseCgroupMemoryBytes(readLinuxPseudoFile(`${dir}/memory.current`)),
+    // Our own usage is not comparable to an ancestor's shared ceiling, so ship the
+    // usage that ceiling actually counts against beside it.
+    ceilingCurrentBytes:
+      binding === undefined || binding.dir === dir
+        ? undefined
+        : parseCgroupMemoryBytes(readLinuxPseudoFile(`${binding.dir}/memory.current`)),
     oomKillCount: parseCgroupMemoryEvent(events, 'oom_kill'),
     maxEventCount: parseCgroupMemoryEvent(events, 'max'),
     highEventCount: parseCgroupMemoryEvent(events, 'high')

@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  cgroupV2AncestorDirs,
   cgroupV2MemoryDirCandidates,
   parseCgroupMemoryBytes,
   parseCgroupMemoryEvent,
   parseCgroupV2Path,
   readLinuxCgroupMemoryLimit,
+  readLinuxPseudoFile,
   resolveCgroupV2MemoryDir,
   setLinuxCgroupMemoryLimitReaderForTest,
   setLinuxPseudoFileReaderForTest
@@ -102,6 +104,8 @@ describe('cgroup v2 memory directory resolution', () => {
       // `max` is no ceiling, and must not surface as one just because it was read.
       highBytes: undefined,
       currentBytes: 4_200_000_000,
+      // Our own scope owns the ceiling, so there is no second usage to print.
+      ceilingCurrentBytes: undefined,
       oomKillCount: 1,
       maxEventCount: 2,
       highEventCount: 7
@@ -128,6 +132,7 @@ describe('cgroup v2 memory directory resolution', () => {
       maxBytes: undefined,
       highBytes: 2_147_483_648,
       currentBytes: 2_100_000_000,
+      ceilingCurrentBytes: undefined,
       oomKillCount: 0,
       maxEventCount: 0,
       highEventCount: 41
@@ -140,6 +145,128 @@ describe('cgroup v2 memory directory resolution', () => {
     expect(details.systemMemoryCgroupMaxMB).toBeUndefined()
     // Throttled 41 times against a 2 GB ceiling, with 20 GB "available" beside it.
     expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
+  })
+
+  // The kernel enforces the MINIMUM ceiling over our cgroup and its ancestors, so
+  // reading only our own level reports "no ceiling" on a snap quota slice, a
+  // `MemoryMax=` on user.slice, or a Kubernetes pod cgroup — the sandboxes this
+  // module names as its reason to exist — and clears the very check that would
+  // have attributed the kill.
+  describe('ceilings inherited from an ancestor cgroup', () => {
+    const SCOPE = '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope'
+    const APP_SLICE = '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice'
+    const USER_SLICE = '/sys/fs/cgroup/user.slice/user-1000.slice'
+
+    it('walks our cgroup and every ancestor up to the mount root, nearest first', () => {
+      expect(cgroupV2AncestorDirs(SCOPE)).toEqual([
+        SCOPE,
+        APP_SLICE,
+        USER_SLICE,
+        '/sys/fs/cgroup/user.slice',
+        '/sys/fs/cgroup'
+      ])
+      // Inside a cgroup namespace the mount root is our own cgroup and has no ancestors.
+      expect(cgroupV2AncestorDirs('/sys/fs/cgroup')).toEqual(['/sys/fs/cgroup'])
+    })
+
+    it("takes an ancestor slice's MemoryMax when our own scope declares none", () => {
+      // `snap set-quota --memory` puts MemoryMax on the parent slice, not the
+      // service unit, so our own memory.max reads `max` while we are hard-capped.
+      setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+      fakeLinuxPseudoFiles({
+        '/proc/self/cgroup': `0::${SCOPE.slice('/sys/fs/cgroup'.length)}\n`,
+        [`${SCOPE}/memory.current`]: '900000000\n',
+        [`${SCOPE}/memory.max`]: 'max\n',
+        [`${SCOPE}/memory.high`]: 'max\n',
+        [`${USER_SLICE}/memory.max`]: '2147483648\n',
+        [`${USER_SLICE}/memory.current`]: '2040000000\n'
+      })
+
+      expect(readLinuxCgroupMemoryLimit('linux')).toMatchObject({
+        maxBytes: 2_147_483_648,
+        currentBytes: 900_000_000,
+        // Our 900 MB says nothing about a ceiling shared with our siblings.
+        ceilingCurrentBytes: 2_040_000_000
+      })
+
+      const details = getSystemMemoryDetails('linux')
+
+      expect(details.systemMemoryCgroupMaxMB).toBe(2_048)
+      expect(details.systemMemoryCgroupCurrentMB).toBe(858)
+      expect(details.systemMemoryCgroupCeilingCurrentMB).toBe(1_945)
+      expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
+    })
+
+    it('keeps our own tighter ceiling over a looser ancestor one', () => {
+      setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+      fakeLinuxPseudoFiles({
+        '/proc/self/cgroup': `0::${SCOPE.slice('/sys/fs/cgroup'.length)}\n`,
+        [`${SCOPE}/memory.current`]: '1000000000\n',
+        [`${SCOPE}/memory.max`]: '1073741824\n',
+        [`${USER_SLICE}/memory.max`]: '8589934592\n',
+        [`${USER_SLICE}/memory.current`]: '5000000000\n'
+      })
+
+      expect(readLinuxCgroupMemoryLimit('linux')).toMatchObject({
+        maxBytes: 1_073_741_824,
+        // The binding ceiling is our own, so there is no second usage to print.
+        ceilingCurrentBytes: undefined
+      })
+      expect(getSystemMemoryDetails('linux').systemMemoryCgroupCeilingCurrentMB).toBeUndefined()
+    })
+
+    it('takes the lowest of the chain, not the nearest declared ceiling', () => {
+      // Both levels declare a MemoryMax and the tighter one is the ancestor's,
+      // which is the only arrangement that separates "lowest in the chain" from
+      // "first one found walking up".
+      setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+      fakeLinuxPseudoFiles({
+        '/proc/self/cgroup': `0::${SCOPE.slice('/sys/fs/cgroup'.length)}\n`,
+        [`${SCOPE}/memory.current`]: '1800000000\n',
+        [`${SCOPE}/memory.max`]: '4294967296\n',
+        [`${USER_SLICE}/memory.max`]: '2147483648\n',
+        [`${USER_SLICE}/memory.current`]: '2000000000\n'
+      })
+
+      expect(readLinuxCgroupMemoryLimit('linux')).toMatchObject({
+        maxBytes: 2_147_483_648,
+        currentBytes: 1_800_000_000,
+        ceilingCurrentBytes: 2_000_000_000
+      })
+      expect(getSystemMemoryDetails('linux').systemMemoryCgroupMaxMB).toBe(2_048)
+    })
+
+    it('resolves memory.max and memory.high independently, each at its own level', () => {
+      // MemoryMax on our scope, MemoryHigh on the app slice above it, and a looser
+      // MemoryMax two levels up: every value here is distinct, so taking the wrong
+      // level, the wrong file, or the higher of a chain lands on a different number.
+      setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+      fakeLinuxPseudoFiles({
+        '/proc/self/cgroup': `0::${SCOPE.slice('/sys/fs/cgroup'.length)}\n`,
+        [`${SCOPE}/memory.current`]: '1200000000\n',
+        [`${SCOPE}/memory.max`]: '4294967296\n',
+        [`${SCOPE}/memory.high`]: 'max\n',
+        [`${APP_SLICE}/memory.high`]: '1610612736\n',
+        [`${APP_SLICE}/memory.max`]: 'max\n',
+        [`${APP_SLICE}/memory.current`]: '1500000000\n',
+        [`${USER_SLICE}/memory.max`]: '8589934592\n'
+      })
+
+      expect(readLinuxCgroupMemoryLimit('linux')).toMatchObject({
+        maxBytes: 4_294_967_296,
+        highBytes: 1_610_612_736,
+        currentBytes: 1_200_000_000,
+        // The lowest ceiling of the two is the app slice's high, so its usage ships.
+        ceilingCurrentBytes: 1_500_000_000
+      })
+
+      const details = getSystemMemoryDetails('linux')
+
+      expect(details.systemMemoryCgroupMaxMB).toBe(4_096)
+      expect(details.systemMemoryCgroupHighMB).toBe(1_536)
+      expect(details.systemMemoryCgroupCurrentMB).toBe(1_144)
+      expect(details.systemMemoryCgroupCeilingCurrentMB).toBe(1_431)
+    })
   })
 
   it('does not turn a zero-length ceiling file into a 0 MB cap', () => {
@@ -159,6 +286,7 @@ describe('cgroup v2 memory directory resolution', () => {
       maxBytes: undefined,
       highBytes: undefined,
       currentBytes: 4_200_000_000,
+      ceilingCurrentBytes: undefined,
       oomKillCount: undefined,
       maxEventCount: undefined,
       highEventCount: undefined
@@ -203,6 +331,16 @@ describe('linux cgroup v2 memory limit', () => {
     // A cgroup namespace already reports "/", so the root is the only candidate.
     expect(cgroupV2MemoryDirCandidates('/')).toEqual(['/sys/fs/cgroup'])
     expect(cgroupV2MemoryDirCandidates(undefined)).toEqual(['/sys/fs/cgroup'])
+  })
+
+  it('reads an unreadable pseudo-file as absent instead of throwing', () => {
+    // The real disk reader, past the seam: the test double answers `undefined` for
+    // a missing path, which is what the swallow PRODUCES, so it can never exercise
+    // it. Without the swallow the first hidden file on a hardened host or a partial
+    // cgroup tree aborts the whole reading, taking the readable fields with it.
+    setLinuxPseudoFileReaderForTest(null)
+
+    expect(readLinuxPseudoFile('/proc/orca-no-such-directory/memory.max')).toBeUndefined()
   })
 
   it('reads `max` as no limit rather than as a numeric ceiling', () => {

@@ -186,7 +186,8 @@ function addLinuxCgroupMemoryDetails(details: CrashReportDetails, platform: Node
   const byteFields: readonly [keyof LinuxCgroupMemoryLimit, string][] = [
     ['maxBytes', 'CgroupMaxMB'],
     ['highBytes', 'CgroupHighMB'],
-    ['currentBytes', 'CgroupCurrentMB']
+    ['currentBytes', 'CgroupCurrentMB'],
+    ['ceilingCurrentBytes', 'CgroupCeilingCurrentMB']
   ]
   for (const [field, suffix] of byteFields) {
     const mb = cgroupMemoryBytesToMB(cgroup[field])
