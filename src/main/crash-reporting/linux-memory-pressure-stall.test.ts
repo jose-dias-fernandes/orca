@@ -167,14 +167,17 @@ describe('stall in linux crash memory details', () => {
     setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
     // A sibling cgroup is the hog: the host stalls, we do not, and whatever
     // killed us was not this. Taking the higher of the two would misname it.
+    // Why 0 and not a small non-zero: 0 is what a calm cgroup actually reads,
+    // and it must still count as a reading rather than fall through to the host.
     setLinuxMemoryPressureStallReaderForTest(() => ({
       host: { fullAvg10: 90 },
-      cgroup: { fullAvg10: 1.2 }
+      cgroup: { fullAvg10: 0 }
     }))
 
     const details = getSystemMemoryDetails('linux')
 
     expect(details.systemMemoryStallFullAvg10Pct).toBe(90)
+    expect(details.systemMemoryCgroupStallFullAvg10Pct).toBe(0)
     expect(details.systemMemoryPressureSignal).toBe('mem-available')
   })
 

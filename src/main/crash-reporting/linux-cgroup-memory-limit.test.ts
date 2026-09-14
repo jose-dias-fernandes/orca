@@ -240,6 +240,22 @@ describe('cgroup-capped linux crash memory details', () => {
     expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
   })
 
+  it('takes the lower ceiling when a unit sets both MemoryHigh and MemoryMax', () => {
+    setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+    // The systemd pair: MemoryMax above host RAM is no ceiling at all, and only
+    // the MemoryHigh below it explains a kill with 20 GB "available" beside it.
+    setLinuxCgroupMemoryLimitReaderForTest(() => ({
+      maxBytes: 48 * 1024 * 1024 * 1024,
+      highBytes: 2 * 1024 * 1024 * 1024
+    }))
+
+    const details = getSystemMemoryDetails('linux')
+
+    expect(details.systemMemoryCgroupMaxMB).toBe(49_152)
+    expect(details.systemMemoryCgroupHighMB).toBe(2_048)
+    expect(details.systemMemoryPressureSignal).toBe('mem-available-cgroup-capped')
+  })
+
   it('adds nothing on a host with no v2 memory controller', () => {
     setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
     setLinuxCgroupMemoryLimitReaderForTest(() => undefined)
