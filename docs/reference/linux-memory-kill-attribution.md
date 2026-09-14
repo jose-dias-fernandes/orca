@@ -18,9 +18,10 @@ The kernel OOM killer does not fire with that much headroom. `181e8e36` is two
 single-process kills, not one whole-cgroup kill: the `process_gone_suppressed`
 GPU crumb is at `22:29:32.397Z` and the renderer report at `22:38:37.276Z`, so
 they are not co-timed and nothing links them beyond the host. And in all three
-Orca's **main** process survived and stayed the reporter — `mainProcessStartedAt`
-hours earlier, `processMetricsBrowserCount: 1` in the post-death sample — which
-is not what a whole-cgroup kill leaves behind.
+Orca's **main** process survived and stayed the reporter — already up 43 m
+(`2ea53f9c`), 11 h (`ad185d76`) and 3 h 11 m (`181e8e36`) by
+`mainProcessStartedAt`, and `processMetricsBrowserCount: 1` in the post-death
+sample — which is not what a whole-cgroup kill leaves behind.
 
 That last point is why `systemd-oomd` is a candidate here and not a conclusion:
 it kills the whole cgroup, and the surviving main process argues against it for

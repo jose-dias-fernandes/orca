@@ -106,6 +106,36 @@ describe('cgroup v2 memory directory resolution', () => {
     })
   })
 
+  it('does not turn a zero-length ceiling file into a 0 MB cap', () => {
+    // A sandbox that stubs /sys/fs/cgroup with empty files: `Number('')` is 0, so
+    // dropping the empty-string term ships a 0 MB ceiling and labels the report
+    // cgroup-capped — a killer named off a file that measured nothing.
+    setSystemMemoryInfoReaderForTest(() => NO_HOST_PRESSURE)
+    setLinuxMemoryPressureStallReaderForTest(() => undefined)
+    fakeLinuxPseudoFiles({
+      '/proc/self/cgroup': SANDBOX_CGROUP_PATH,
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.current': '4200000000',
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.max': '',
+      '/sys/fs/cgroup/user.slice/user-1000.slice/app.slice/orca.scope/memory.high': ''
+    })
+
+    expect(readLinuxCgroupMemoryLimit('linux')).toEqual({
+      maxBytes: undefined,
+      highBytes: undefined,
+      currentBytes: 4_200_000_000,
+      oomKillCount: undefined,
+      maxEventCount: undefined,
+      highEventCount: undefined
+    })
+
+    const details = getSystemMemoryDetails('linux')
+
+    expect(details.systemMemoryCgroupMaxMB).toBeUndefined()
+    expect(details.systemMemoryCgroupHighMB).toBeUndefined()
+    expect(details.systemMemoryCgroupCurrentMB).toBe(4_005)
+    expect(details.systemMemoryPressureSignal).toBe('mem-available')
+  })
+
   it('says nothing rather than a row of undefineds when the files are garbage', () => {
     fakeLinuxPseudoFiles({
       '/proc/self/cgroup': SANDBOX_CGROUP_PATH,
