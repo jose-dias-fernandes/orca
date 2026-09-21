@@ -83,6 +83,9 @@ export function addOrcaWslInteropEnv(env: Record<string, string>): void {
     'ORCA_TAB_ID/u',
     'ORCA_WORKTREE_ID/u',
     'ORCA_AGENT_LAUNCH_TOKEN/u',
+    // The guest plugin uses this marker to select the OpenCode variant that
+    // owns the pane when both native and WSL installations are present.
+    'ORCA_OPENCODE_AGENT/u',
     `${SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV}/u`,
     `${SETUP_AGENT_SEQUENCE_STARTUP_SCRIPT_ENV}/u`,
     'ORCA_ORCHESTRATION_COMPATIBILITY_HOST_KIND/u',
