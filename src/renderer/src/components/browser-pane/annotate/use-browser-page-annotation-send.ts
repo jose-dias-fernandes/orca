@@ -78,68 +78,6 @@ export function useBrowserPageAnnotationSend({
     }
   }, [])
 
-  const handleAnnotationBannerSendOpenChange = useCallback(
-    (open: boolean): void => {
-      if (open) {
-        openAgentSendPopoverTargetMode({
-          id: annotationBannerSendModeId,
-          worktreeId,
-          source: 'browser-annotations',
-          prompt: browserAnnotationsPrompt,
-          label: translate(
-            'auto.components.browser.pane.BrowserPane.27d863542c',
-            'Browser annotations'
-          ),
-          launchSource: 'notes_send'
-        })
-      } else {
-        closeAgentSendPopoverTargetMode(annotationBannerSendModeId)
-      }
-    },
-    [
-      annotationBannerSendModeId,
-      browserAnnotationsPrompt,
-      closeAgentSendPopoverTargetMode,
-      openAgentSendPopoverTargetMode,
-      worktreeId
-    ]
-  )
-
-  const handleAnnotationTraySendOpenChange = useCallback(
-    (open: boolean): void => {
-      if (open) {
-        openAgentSendPopoverTargetMode({
-          id: annotationTraySendModeId,
-          worktreeId,
-          source: 'browser-annotations',
-          prompt: browserAnnotationsPrompt,
-          label: translate(
-            'auto.components.browser.pane.BrowserPane.27d863542c',
-            'Browser annotations'
-          ),
-          launchSource: 'notes_send'
-        })
-      } else {
-        closeAgentSendPopoverTargetMode(annotationTraySendModeId)
-      }
-    },
-    [
-      annotationTraySendModeId,
-      browserAnnotationsPrompt,
-      closeAgentSendPopoverTargetMode,
-      openAgentSendPopoverTargetMode,
-      worktreeId
-    ]
-  )
-
-  useEffect(
-    () => () => {
-      closeAgentSendPopoverTargetMode(annotationBannerSendModeId)
-      closeAgentSendPopoverTargetMode(annotationTraySendModeId)
-    },
-    [annotationBannerSendModeId, annotationTraySendModeId, closeAgentSendPopoverTargetMode]
-  )
-
   const handleCopyBrowserAnnotations = useCallback((): void => {
     if (!browserAnnotationsPrompt) {
       return
@@ -153,7 +91,8 @@ export function useBrowserPageAnnotationSend({
 
   const handleBrowserAnnotationsSentToAgent = useCallback((): void => {
     recordFeatureInteraction('browser-annotations-sent-to-agent')
-  }, [recordFeatureInteraction])
+    clearBrowserPageAnnotations(browserTabId, browserAnnotations)
+  }, [browserAnnotations, browserTabId, clearBrowserPageAnnotations, recordFeatureInteraction])
 
   const handleClearBrowserAnnotations = useCallback((): void => {
     if (browserAnnotationsRef.current.length === 0) {
@@ -164,6 +103,52 @@ export function useBrowserPageAnnotationSend({
     recordFeatureInteraction('browser-annotations')
     clearBrowserPageAnnotations(browserTabId)
   }, [browserTabId, clearBrowserPageAnnotations, recordFeatureInteraction])
+
+  const handleAnnotationSendOpenChange = useCallback(
+    (modeId: string, open: boolean): void => {
+      if (open) {
+        openAgentSendPopoverTargetMode({
+          id: modeId,
+          worktreeId,
+          source: 'browser-annotations',
+          prompt: browserAnnotationsPrompt,
+          label: translate(
+            'auto.components.browser.pane.BrowserPane.27d863542c',
+            'Browser annotations'
+          ),
+          launchSource: 'notes_send',
+          onPromptDelivered: handleBrowserAnnotationsSentToAgent
+        })
+      } else {
+        closeAgentSendPopoverTargetMode(modeId)
+      }
+    },
+    [
+      browserAnnotationsPrompt,
+      handleBrowserAnnotationsSentToAgent,
+      closeAgentSendPopoverTargetMode,
+      openAgentSendPopoverTargetMode,
+      worktreeId
+    ]
+  )
+
+  const handleAnnotationBannerSendOpenChange = useCallback(
+    (open: boolean): void => handleAnnotationSendOpenChange(annotationBannerSendModeId, open),
+    [annotationBannerSendModeId, handleAnnotationSendOpenChange]
+  )
+
+  const handleAnnotationTraySendOpenChange = useCallback(
+    (open: boolean): void => handleAnnotationSendOpenChange(annotationTraySendModeId, open),
+    [annotationTraySendModeId, handleAnnotationSendOpenChange]
+  )
+
+  useEffect(
+    () => () => {
+      closeAgentSendPopoverTargetMode(annotationBannerSendModeId)
+      closeAgentSendPopoverTargetMode(annotationTraySendModeId)
+    },
+    [annotationBannerSendModeId, annotationTraySendModeId, closeAgentSendPopoverTargetMode]
+  )
 
   const handleDeleteBrowserAnnotation = useCallback(
     (annotationId: string): void => {

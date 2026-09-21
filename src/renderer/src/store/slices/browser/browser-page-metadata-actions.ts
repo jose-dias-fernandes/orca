@@ -118,13 +118,21 @@ export function createBrowserPageMetadataActions(
         return { browserAnnotationsByPageId: nextByPageId }
       }),
 
-    clearBrowserPageAnnotations: (pageId) =>
+    clearBrowserPageAnnotations: (pageId, deliveredAnnotations) =>
       set((s) => {
-        if (!s.browserAnnotationsByPageId[pageId]?.length) {
+        const existing = s.browserAnnotationsByPageId[pageId] ?? []
+        // Immutable note identity preserves edits and additions made during delivery.
+        const delivered = deliveredAnnotations && new Set(deliveredAnnotations)
+        const remaining = delivered ? existing.filter((note) => !delivered.has(note)) : []
+        if (remaining.length === existing.length) {
           return s
         }
         const nextByPageId = { ...s.browserAnnotationsByPageId }
-        delete nextByPageId[pageId]
+        if (remaining.length > 0) {
+          nextByPageId[pageId] = remaining
+        } else {
+          delete nextByPageId[pageId]
+        }
         return { browserAnnotationsByPageId: nextByPageId }
       })
   }
