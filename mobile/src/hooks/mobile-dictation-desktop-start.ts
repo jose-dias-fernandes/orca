@@ -56,6 +56,17 @@ export async function startMobileDictationDesktopSession(
     dictationSessionStart.interpret(reply)
   } catch (err) {
     const wasCurrent = isCurrentStart(options)
+    // The hook opened the capture before this ran, and an open microphone holds the screen. No
+    // session started, so both go back — through the same rollback the commit failure below uses,
+    // because "undo the capture this start opened" is one thing and the hook owns it. Before the
+    // screen moved onto the mic this path leaked only an idle audio session; now it would pin the
+    // display until the user cancelled, retried, or the screen unmounted.
+    try {
+      options.rollbackRecordingStart()
+    } catch {
+      // Guarded for the reason the commit arm below is: a seam that throws on the way down must
+      // not take the desktop cancel with it, nor replace the failure the caller is about to see.
+    }
     options.clearActiveId(dictationId)
     await dictationSessionCancel.request(client, { dictationId }).catch(() => undefined)
     // Awaited cleanup may overlap a newer start; stale work must not reset or

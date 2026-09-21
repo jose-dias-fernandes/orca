@@ -101,6 +101,49 @@ describe('startMobileDictationDesktopSession', () => {
     expect(harness.commitRecordingStart).not.toHaveBeenCalled()
   })
 
+  it('closes the capture the hook opened when the desktop start fails', async () => {
+    const harness = createStartHarness({
+      sendRequest: async (method) => {
+        if (method === 'speech.dictation.start') {
+          throw new Error('Desktop start failed')
+        }
+        return OK_RESPONSE
+      }
+    })
+
+    await expect(startMobileDictationDesktopSession(harness.options)).rejects.toThrow(
+      'Desktop start failed'
+    )
+
+    // The hook opened the microphone before this ran, and an open microphone holds the screen. No
+    // session started, so both have to go back; nothing else on this path would end the capture,
+    // and the hook's `start` has no catch to do it either.
+    expect(harness.rollbackRecordingStart).toHaveBeenCalledOnce()
+    expect(harness.sendRequest).toHaveBeenCalledWith('speech.dictation.cancel', {
+      dictationId: 'dictation-a'
+    })
+  })
+
+  it('closes it even when the failure is not the current start to report', async () => {
+    let setNewerStart = () => undefined
+    const harness = createStartHarness({
+      sendRequest: async (method) => {
+        if (method === 'speech.dictation.start') {
+          setNewerStart()
+          throw new Error('Desktop start failed')
+        }
+        return OK_RESPONSE
+      }
+    })
+    setNewerStart = harness.setNewerStart
+
+    await expect(startMobileDictationDesktopSession(harness.options)).resolves.toBe(false)
+
+    // A start nobody will hear about still opened a microphone, and the screen does not care
+    // which generation held it.
+    expect(harness.rollbackRecordingStart).toHaveBeenCalledOnce()
+  })
+
   it('does not surface a desktop-start failure after the start became stale', async () => {
     let setNewerStart = () => undefined
     const harness = createStartHarness({
