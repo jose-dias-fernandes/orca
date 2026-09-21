@@ -12,8 +12,10 @@ import { censusSourceFiles } from '../test-support/census-source-files'
 const MOBILE_ROOT = join(import.meta.dirname, '..', '..')
 const FLAG_KEY = 'orca:mobileWebShellEnabled'
 const DEFINITION = 'src/storage/preferences.ts'
-/** The one product reader. Every route asks it, so the list below stays the whole census. */
+/** The one product reader, which only the shared switch decision asks. */
 const FLAG_HOOK = 'src/mobile-web-shell/use-mobile-web-shell-enabled.ts'
+/** The one caller of that hook: every route asks this instead, so its list is the whole census. */
+const DECISION = 'src/mobile-web-shell/shell-switch-decision.ts'
 const ROUTE = 'app/h/[hostId]/web.tsx'
 const HOST_ROUTE = 'app/h/[hostId]/index.tsx'
 const AGENT_HISTORY_ROUTE = 'app/h/[hostId]/agent-history/[worktreeId].tsx'
@@ -67,6 +69,7 @@ describe('who touches the hybrid shell flag', () => {
     const paths = SOURCES.map((file) => file.path)
     expect(paths).toContain(DEFINITION)
     expect(paths).toContain(FLAG_HOOK)
+    expect(paths).toContain(DECISION)
     expect(paths).toContain(ROUTE)
     for (const route of SWITCHED_ROUTES) {
       expect(paths).toContain(route)
@@ -90,14 +93,21 @@ describe('who touches the hybrid shell flag', () => {
     )
   })
 
-  it('reaches the switched routes through that hook and no others', () => {
+  it('is read by the shared switch decision and by nothing else', () => {
+    // The narrowest this has ever been, and the reason the rule below is total: a route cannot
+    // hold a private opinion about the flag — including about the window where it is still `null`
+    // — without reading it, and this is the only place that reads it.
+    expect(filesContaining('useMobileWebShellEnabled')).toEqual([DECISION, FLAG_HOOK].sort())
+  })
+
+  it('reaches the switched routes through that decision and no others', () => {
     // Each switched route is a screen the flag decides the renderer of, and one more is one more
     // place a dark feature could turn itself on. The list grows once per domain series, in the PR
     // that switches the route file to MobileWebShellScreen, and never as a side effect of anything
     // else. A switched route is inert until MOBILE_WEB_PAGE_ROUTES lists it as well, so an entry
     // here can land a PR ahead of that one.
-    expect(filesContaining('useMobileWebShellEnabled')).toEqual(
-      [FLAG_HOOK, ROUTE, ...SWITCHED_ROUTES].sort()
+    expect(filesContaining('useShellSwitchDecision')).toEqual(
+      [DECISION, ROUTE, ...SWITCHED_ROUTES].sort()
     )
   })
 
