@@ -152,6 +152,17 @@ describe('who touches the hybrid shell flag', () => {
     ).toEqual([PENDING_SCREEN, ROUTE, ...SWITCHED_ROUTES].sort())
   })
 
+  it('fences the build kind in one place, which both the read and the hook ask', () => {
+    // The `__DEV__` test that makes a store build unable to turn the flag on. The hook starts its
+    // state on it so a release build never reaches the neutral state, which is the same answer
+    // `loadMobileWebShellEnabled` gives one render later — and two spellings of one build-kind
+    // test are two things to keep true, where this feature's darkness rests on exactly one.
+    expect(
+      filesContaining('mobileWebShellFlagCanBeOn'),
+      matchesOf('mobileWebShellFlagCanBeOn')
+    ).toEqual([DEFINITION, FLAG_HOOK].sort())
+  })
+
   it('is written only by the developer row', () => {
     expect(filesContaining('saveMobileWebShellEnabled')).toEqual([DEFINITION, DEVELOPER_ROW].sort())
   })

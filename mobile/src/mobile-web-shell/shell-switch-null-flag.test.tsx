@@ -1,5 +1,5 @@
 import { createElement, type ComponentType } from 'react'
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type SwitchDependencies = {
@@ -10,6 +10,9 @@ type SwitchDependencies = {
    *  what the user was shown. */
   natives: string[]
   shells: string[]
+  /** Committed mounts of the neutral screen, which is what "never paints a neutral frame" needs:
+   *  a frame committed and replaced inside one `act` leaves nothing in the final tree. */
+  neutrals: number
   params: Record<string, string | string[] | undefined>
 }
 
@@ -18,6 +21,7 @@ const dependencies = vi.hoisted((): SwitchDependencies => ({
   reads: 0,
   natives: [],
   shells: [],
+  neutrals: 0,
   params: {}
 }))
 
@@ -65,6 +69,18 @@ vi.mock('./MobileWebShellScreen', async () => {
       const pathname = React.useRef(props.route.pathname)
       React.useEffect(() => {
         dependencies.shells.push(pathname.current)
+      }, [])
+      return null
+    }
+  }
+})
+
+vi.mock('./ShellSwitchPendingScreen', async () => {
+  const React = await import('react')
+  return {
+    ShellSwitchPendingScreen: () => {
+      React.useEffect(() => {
+        dependencies.neutrals += 1
       }, [])
       return null
     }
@@ -195,10 +211,19 @@ const SWITCHES: readonly SwitchCase[] = [
   }
 ]
 
-/** Host elements are matched by name: React's `ElementType` does not admit a host name, so the
- *  typed form is a predicate. */
-function byName(tree: ReactTestRenderer, name: string): ReactTestInstance[] {
-  return tree.root.findAll((node) => String(node.type) === name)
+/**
+ * `__DEV__` is a React Native global with no value under this runner, so every case pins it rather
+ * than inheriting one: assigned onto `globalThis` for a build kind that has it and deleted for a
+ * store build, which is what the app sees when the bundler defined nothing. Which one is in force
+ * decides whether the neutral state is reachable at all, so an unpinned case would be measuring
+ * the runner.
+ */
+function setDevelopmentBuild(isDevelopmentBuild: boolean | undefined): void {
+  if (isDevelopmentBuild === undefined) {
+    Reflect.deleteProperty(globalThis, '__DEV__')
+    return
+  }
+  Object.assign(globalThis, { __DEV__: isDevelopmentBuild })
 }
 
 /** Renders without settling the flag read: no `await` inside `act`, so the effect's promise is
@@ -214,22 +239,23 @@ function renderUnsettled(Route: ComponentType): ReactTestRenderer {
   return rendered.tree
 }
 
-describe.each(SWITCHES)('the $name switch while the flag is unresolved', (entry) => {
+describe.each(SWITCHES)('the $name switch on a development build', (entry) => {
   beforeEach(() => {
     dependencies.storage.clear()
     dependencies.reads = 0
     dependencies.natives.length = 0
     dependencies.shells.length = 0
+    dependencies.neutrals = 0
     dependencies.params = { ...entry.params }
-    Object.assign(globalThis, { __DEV__: true })
+    setDevelopmentBuild(true)
   })
 
-  it('mounts neither renderer, and paints the neutral state instead', async () => {
+  it('mounts neither renderer while the flag is unresolved, and paints the neutral state', async () => {
     dependencies.storage.set(FLAG_KEY, 'true')
-    const tree = renderUnsettled(entry.Route)
+    renderUnsettled(entry.Route)
     expect(dependencies.natives).toEqual([])
     expect(dependencies.shells).toEqual([])
-    expect(byName(tree, 'ActivityIndicator')).toHaveLength(1)
+    expect(dependencies.neutrals).toBe(1)
     await act(async () => {})
   })
 
@@ -242,27 +268,64 @@ describe.each(SWITCHES)('the $name switch while the flag is unresolved', (entry)
   })
 
   it('mounts native once when the read resolves off, and nothing else', async () => {
-    const tree = renderUnsettled(entry.Route)
+    renderUnsettled(entry.Route)
     await act(async () => {})
     expect(dependencies.natives).toEqual([entry.native])
     expect(dependencies.shells).toEqual([])
-    expect(byName(tree, 'ActivityIndicator')).toEqual([])
+  })
+})
+
+/**
+ * The build every store user is on, where the flag cannot be turned on at all.
+ *
+ * A neutral frame is worth a native mount only when the flag could resolve on. Outside `__DEV__`
+ * it cannot, so the hook holds `false` from its first render and the `pending` branch is
+ * unreachable here: the switch commits the native renderer on frame one and never revises it.
+ */
+describe.each(SWITCHES)('the $name switch on a release build', (entry) => {
+  beforeEach(() => {
+    dependencies.storage.clear()
+    dependencies.reads = 0
+    dependencies.natives.length = 0
+    dependencies.shells.length = 0
+    dependencies.neutrals = 0
+    dependencies.params = { ...entry.params }
+    setDevelopmentBuild(false)
   })
 
-  it('reaches no storage at all on a release build, which is what bounds the window', async () => {
-    // How long a released phone spends on the neutral state, which is the only thing this change
-    // costs a user with the flag off. `loadMobileWebShellEnabled` answers `false` outside `__DEV__`
-    // before it looks at the key, so the window is not an AsyncStorage round trip across the
-    // bridge — it is React's own passive-effect flush and one microtask, and the switch has its
-    // answer on the first turn after the first commit.
-    Object.assign(globalThis, { __DEV__: false })
+  it('commits native on its first frame and never mounts the neutral screen', async () => {
+    // A flag a development build left in the container, which a store build shares a bundle id
+    // with: still unreachable, and still no neutral frame in front of it.
+    dependencies.storage.set(FLAG_KEY, 'true')
+    renderUnsettled(entry.Route)
+    expect(dependencies.neutrals).toBe(0)
+    expect(dependencies.natives).toEqual([entry.native])
+    expect(dependencies.shells).toEqual([])
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(dependencies.neutrals).toBe(0)
+    expect(dependencies.natives).toEqual([entry.native])
+    expect(dependencies.shells).toEqual([])
+  })
+
+  it('reaches no storage at all, which is what makes the first frame decidable', async () => {
+    // The same fact the initialiser rests on: `loadMobileWebShellEnabled` answers `false` outside
+    // `__DEV__` before it looks at the key, so there is nothing to wait for and nothing to read.
     dependencies.storage.set(FLAG_KEY, 'true')
     renderUnsettled(entry.Route)
     await act(async () => {
       await Promise.resolve()
     })
     expect(dependencies.reads).toBe(0)
+  })
+
+  it('does the same when the bundler defined no `__DEV__` at all', async () => {
+    setDevelopmentBuild(undefined)
+    dependencies.storage.set(FLAG_KEY, 'true')
+    renderUnsettled(entry.Route)
+    expect(dependencies.neutrals).toBe(0)
     expect(dependencies.natives).toEqual([entry.native])
-    expect(dependencies.shells).toEqual([])
+    await act(async () => {})
   })
 })

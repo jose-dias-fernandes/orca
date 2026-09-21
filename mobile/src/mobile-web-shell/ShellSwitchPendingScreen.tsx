@@ -2,7 +2,8 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native'
 import { colors } from '../theme/mobile-theme'
 
 /**
- * What a route switch paints while the hybrid shell flag is still being read.
+ * What a route switch paints while the hybrid shell flag is still being read, which is a
+ * development build only: a store build cannot have the flag on and never reaches this.
  *
  * The base background and nothing else placed on it, so the frame before the decision looks like
  * the frame after it whichever way the decision goes. Lifted out of the `web` route, which is
