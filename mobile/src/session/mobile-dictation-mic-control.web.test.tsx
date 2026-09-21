@@ -52,7 +52,6 @@ import {
   type BridgePortPair
 } from '../mobile-web-shell/bridge/bridge-port-pair-test-harness'
 import { createNativeAudioCapture, type NativeAudioEngine } from '../platform/native-audio'
-import { createNativeWakelockServer } from '../platform/native-wakelock'
 import { useMobileDictation } from '../hooks/use-mobile-dictation'
 import { MobileTerminalInputActions } from './MobileTerminalInputActions'
 import type { BridgeNativeVerb } from '../mobile-web-shell/bridge/bridge-native-verbs'
@@ -60,7 +59,7 @@ import type { BridgeNativeVerb } from '../mobile-web-shell/bridge/bridge-native-
 /** Every message that reached the composer's own error handler, which is what it toasts. */
 const reported: string[] = []
 
-/** The four verbs served by the real handlers over an engine that opens and produces no audio. */
+/** The three verbs served by the real handlers over an engine that opens and produces no audio. */
 function createAudioShell(): (verb: BridgeNativeVerb, params: unknown) => Promise<unknown> {
   const engine: NativeAudioEngine = {
     requestPermission: async () => 'granted',
@@ -68,15 +67,11 @@ function createAudioShell(): (verb: BridgeNativeVerb, params: unknown) => Promis
     begin: () => true,
     end: () => {},
     onMicrophoneData: () => ({ remove: () => {} }),
-    onInterruption: () => ({ remove: () => {} })
+    onInterruption: () => ({ remove: () => {} }),
+    screenLock: { hold: () => {}, release: () => {} }
   }
   const capture = createNativeAudioCapture(engine)
-  const { serve: wakelock } = createNativeWakelockServer({
-    activate: async () => undefined,
-    deactivate: async () => undefined
-  })
-  return (verb, params) =>
-    verb === 'native.wakelock.set' ? wakelock(params) : capture.serve(verb, params)
+  return (verb, params) => capture.serve(verb, params)
 }
 
 function Composer({ pair }: { pair: BridgePortPair }): ReactElement {
@@ -215,7 +210,7 @@ describe('the mic control on a page the shell did grant audio', () => {
     expect(mic.label()).toBe('Stop voice dictation')
   })
 
-  it('opens the capture and takes the wake tag through the shell', async () => {
+  it('opens the capture through the shell, and asks it for nothing else', async () => {
     const pair = createFakeBridgePortPair({ serveNativeVerb: createAudioShell() })
     const mic = await mount(pair)
     await mic.tap()
@@ -225,7 +220,9 @@ describe('the mic control on a page the shell did grant audio', () => {
         frame.type === 'request' && frame.method.startsWith('native.') ? [frame.method] : []
       )
     expect(verbs).toContain('native.audio.start')
-    expect(verbs).toContain('native.wakelock.set')
+    // Only the microphone: the screen it holds awake is the device's, and the page has no verb for
+    // it to ask through.
+    expect(verbs.every((verb) => verb.startsWith('native.audio.'))).toBe(true)
     // And the desktop was told, which is what makes the recording a session rather than a mic.
     expect(
       pair

@@ -174,15 +174,7 @@ export function createPageDictationCapture(
       void verbs.stopAudio().catch(() => undefined)
     },
     onChunk: (handler) => subscribe(chunkHandlers, handler),
-    onInterruption: (handler) => subscribe(interruptionHandlers, handler),
-    keepAwake: {
-      activate: async (tag) => {
-        await verbs.setWakelock(true, tag)
-      },
-      deactivate: async (tag) => {
-        await verbs.setWakelock(false, tag)
-      }
-    }
+    onInterruption: (handler) => subscribe(interruptionHandlers, handler)
   }
 }
 

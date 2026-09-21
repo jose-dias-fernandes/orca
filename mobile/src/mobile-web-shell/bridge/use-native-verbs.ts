@@ -13,7 +13,6 @@ import {
   audioReadResultSchema,
   audioStartResultSchema,
   audioStopResultSchema,
-  wakelockSetResultSchema,
   type BridgeAudioChunk
 } from './bridge-audio-verbs'
 import {
@@ -83,9 +82,6 @@ export type NativeVerbs = {
    *  utterance no drain came back for. `stopped` is false for a session that was not capturing,
    *  which is not a fault. */
   stopAudio: () => Promise<z.infer<typeof audioStopResultSchema>>
-  /** Whether the tag is held after the call. The shell asks the device nothing for a tag it never
-   *  took, so releasing one twice is not a fault either. */
-  setWakelock: (active: boolean, tag: string) => Promise<boolean>
 }
 
 /**
@@ -225,9 +221,7 @@ export function useNativeVerbs(): NativeVerbs {
       startAudio: (sampleRate) =>
         call('native.audio.start', { sampleRate }, audioStartResultSchema),
       readAudio: (maxBytes) => call('native.audio.read', { maxBytes }, audioReadResultSchema),
-      stopAudio: () => call('native.audio.stop', {}, audioStopResultSchema),
-      setWakelock: async (active, tag) =>
-        (await call('native.wakelock.set', { active, tag }, wakelockSetResultSchema)).active
+      stopAudio: () => call('native.audio.stop', {}, audioStopResultSchema)
     }
   }, [client])
 }

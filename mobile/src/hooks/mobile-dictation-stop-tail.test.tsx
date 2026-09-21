@@ -64,8 +64,7 @@ vi.mock('../platform/dictation-capture', () => {
         }
       }
     },
-    onInterruption: () => ({ remove: () => {} }),
-    keepAwake: { activate: async () => {}, deactivate: async () => {} }
+    onInterruption: () => ({ remove: () => {} })
   }
   return { useDictationCapture: () => capture }
 })

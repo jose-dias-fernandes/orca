@@ -31,13 +31,12 @@ import {
 import { NativeVerbError } from '../mobile-web-shell/bridge/use-native-verbs'
 import { MOBILE_DICTATION_PCM_SAMPLE_RATE } from '../hooks/mobile-dictation-pending-audio-budget'
 import { createNativeAudioCapture, type NativeAudioEngine } from './native-audio'
-import { createNativeWakelockServer } from './native-wakelock'
 import { useDictationCapture } from './dictation-capture.web'
 import { DICTATION_CAPTURE_DRAIN_INTERVAL_MS } from './dictation-capture-contract'
 import type { BridgeNativeVerb } from '../mobile-web-shell/bridge/bridge-native-verbs'
 import type { DictationCapture, DictationCaptureChunk } from './dictation-capture-contract'
 
-/** The four verbs, served by the real shell handlers over an engine a case drives. */
+/** The three verbs, served by the real shell handlers over an engine a case drives. */
 function createAudioShell(
   options: {
     permission?: 'granted' | 'denied' | 'undetermined'
@@ -67,13 +66,10 @@ function createAudioShell(
           interrupt = null
         }
       }
-    }
+    },
+    screenLock: { hold: () => {}, release: () => {} }
   }
   const capture = createNativeAudioCapture(engine)
-  const { serve: wakelock } = createNativeWakelockServer({
-    activate: async () => undefined,
-    deactivate: async () => undefined
-  })
   const calls: string[] = []
   return {
     calls,
@@ -85,7 +81,7 @@ function createAudioShell(
       if (refusal !== null) {
         return Promise.reject(refusal)
       }
-      return verb === 'native.wakelock.set' ? wakelock(params) : capture.serve(verb, params)
+      return capture.serve(verb, params)
     }
   }
 }
@@ -547,41 +543,6 @@ describe('a capture the page loses', () => {
     expect(() => capture.end()).not.toThrow()
     expect(() => capture.release()).not.toThrow()
     await pair.flush()
-  })
-})
-
-describe('the wake tag on the page', () => {
-  it('takes and gives back a tag through the shell', async () => {
-    const shell = createAudioShell()
-    const pair = createFakeBridgePortPair({ serveNativeVerb: shell.serveNativeVerb })
-    const capture = await mount(pair)
-    await expect(capture.keepAwake.activate('orca-mobile-dictation:1')).resolves.toBeUndefined()
-    await expect(capture.keepAwake.deactivate('orca-mobile-dictation:1')).resolves.toBeUndefined()
-    expect(shell.calls).toEqual(['native.wakelock.set', 'native.wakelock.set'])
-  })
-
-  it('rejects when the shell refuses the tag, so the owner can retry rather than believe it', async () => {
-    const shell = createAudioShell({
-      refuse: (verb) =>
-        verb === 'native.wakelock.set'
-          ? new BridgeNativeVerbRefusedError('native_verb_failed', 'no wake lock on this device')
-          : null
-    })
-    const pair = createFakeBridgePortPair({ serveNativeVerb: shell.serveNativeVerb })
-    const capture = await mount(pair)
-    await expect(capture.keepAwake.activate('orca-a')).rejects.toBeInstanceOf(NativeVerbError)
-  })
-
-  it('rejects when the route was never granted the wake lock', async () => {
-    const shell = createAudioShell()
-    const pair = createFakeBridgePortPair({
-      serveNativeVerb: shell.serveNativeVerb,
-      routeGrants: ['navigate', 'native.audio.start', 'native.audio.read', 'native.audio.stop']
-    })
-    const capture = await mount(pair)
-    await expect(capture.keepAwake.activate('orca-a')).rejects.toSatisfy(
-      (error: unknown) => error instanceof NativeVerbError && error.reason === 'ungranted'
-    )
   })
 })
 

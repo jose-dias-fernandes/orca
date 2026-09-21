@@ -5,9 +5,8 @@ import {
   tearDown,
   toggleRecording
 } from '@orca/expo-two-way-audio'
-import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { bridgeAudioInterruptionEndsCapture } from '../mobile-web-shell/bridge/bridge-audio-verbs'
-import { createMicrophoneScreenLock } from './microphone-screen-lock'
+import { nativeMicrophoneScreenLock } from './native-audio-device'
 import type { DictationCapture } from './dictation-capture-contract'
 
 /**
@@ -19,14 +18,8 @@ import type { DictationCapture } from './dictation-capture-contract'
  * the page can answer the same shape without the flow above knowing which it holds.
  */
 
-/** One tag for the one microphone this process has, minted here rather than asked for: the screen
- *  is a property of the capture, and nothing above this seam names it. */
-const NATIVE_DICTATION_SCREEN_LOCK_TAG = 'orca-native-microphone'
-
-const screen = createMicrophoneScreenLock(
-  { activate: activateKeepAwakeAsync, deactivate: deactivateKeepAwake },
-  NATIVE_DICTATION_SCREEN_LOCK_TAG
-)
+/** The same lock the shell's capture holds: one microphone, one screen, one tag. */
+const screen = nativeMicrophoneScreenLock
 
 const nativeDictationCapture: DictationCapture = {
   open: async () => {
@@ -85,8 +78,7 @@ const nativeDictationCapture: DictationCapture = {
       if (bridgeAudioInterruptionEndsCapture(event.data)) {
         handler()
       }
-    }),
-  keepAwake: { activate: activateKeepAwakeAsync, deactivate: deactivateKeepAwake }
+    })
 }
 
 export function useDictationCapture(): DictationCapture {

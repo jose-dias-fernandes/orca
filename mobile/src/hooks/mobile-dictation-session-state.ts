@@ -26,10 +26,6 @@ export type UseMobileDictationResult = {
 
 export const DICTATION_FINISH_TIMEOUT_MS = 75_000
 
-// Recording start waits at most this long for the best-effort wake tag; a
-// slow or hung native keep-awake module must not hold the mic in 'starting'.
-export const MOBILE_DICTATION_KEEP_AWAKE_STARTUP_BUDGET_MS = 500
-
 export function bytesToBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64')
 }

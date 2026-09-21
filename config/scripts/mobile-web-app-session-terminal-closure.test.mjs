@@ -177,14 +177,24 @@ const MERMAID_PACKAGE = 'node_modules/mermaid/'
  * `src/mobile-web-shell/bridge/bridge-audio-verbs.ts` — and eight vendored ones leave, because the
  * capture seam is what stops the page importing a microphone it does not have. Five are
  * `@orca/expo-two-way-audio` (its web module, `core`, `events`, `hooks` and the index) and three
- * are `expo-keep-awake`; the page asks the shell for both over `native.audio.start|read|stop` and
- * `native.wakelock.set` instead. The native halves of the seam resolve out of this closure
- * entirely, which is the -8 + 3.
+ * are `expo-keep-awake`; the page asks the shell for the microphone over
+ * `native.audio.start|read|stop` instead, and never asks about the screen at all — an open mic
+ * holds it on the device side. The native halves of the seam resolve out of this closure entirely,
+ * which is the -8 + 3.
  *
  * Measured, not derived: `mobile-web-app-session-dictation-capture.test.mjs` moves the web file
  * aside and walks the closure again, which puts those eight back.
+ *
+ * Then ruling 36 gave the screen to the microphone, and two more local modules left:
+ *
+ *   modules        4323 -> 4321   (-2)
+ *
+ * `src/hooks/mobile-dictation-keep-awake.ts` and
+ * `src/hooks/mobile-dictation-foreground-keep-awake.ts` were the page's wake-tag owner and its
+ * Android foreground re-acquire. Both are deleted, not moved: the device module that opens the
+ * microphone takes the screen and gives it back, so the page has nothing left to own.
  */
-const SESSION_ROUTE_MODULES = 4323
+const SESSION_ROUTE_MODULES = 4321
 
 const artifactModules = (inputs) => inputs.filter((input) => input.includes(MERMAID_PAGE_ENGINE))
 const packageModules = (inputs) => inputs.filter((input) => input.includes(MERMAID_PACKAGE))

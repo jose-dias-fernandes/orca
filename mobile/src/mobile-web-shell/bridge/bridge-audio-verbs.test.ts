@@ -11,7 +11,6 @@ import { MobileWebBundleRouteSchema } from '../../../../src/shared/mobile-web-bu
 import { MOBILE_DICTATION_MAX_PENDING_AUDIO_BYTES } from '../../hooks/mobile-dictation-pending-audio-budget'
 import { BridgeNativeVerbRefusedError } from '../bridge-host-errors'
 import { createNativeAudioCapture, type NativeAudioEngine } from '../../platform/native-audio'
-import { createNativeWakelockServer } from '../../platform/native-wakelock'
 import {
   BRIDGE_AUDIO_READ_MAX_BASE64_CHARS,
   BRIDGE_AUDIO_RING_MAX_BYTES,
@@ -19,17 +18,11 @@ import {
   audioReadResultSchema,
   audioStartParamsSchema,
   audioStopParamsSchema,
-  audioStopResultSchema,
-  wakelockSetParamsSchema
+  audioStopResultSchema
 } from './bridge-audio-verbs'
 import { BRIDGE_NATIVE_VERB_NAMES, BRIDGE_NATIVE_VERBS } from './bridge-native-verbs'
 
-const AUDIO_VERBS = [
-  'native.audio.start',
-  'native.audio.read',
-  'native.audio.stop',
-  'native.wakelock.set'
-] as const
+const AUDIO_VERBS = ['native.audio.start', 'native.audio.read', 'native.audio.stop'] as const
 
 /** An engine whose every call is a value a case can set, and whose events a case can fire. */
 function createTestEngine(
@@ -42,10 +35,9 @@ function createTestEngine(
   const microphone: ((bytes: Uint8Array) => void)[] = []
   const interruptions: ((kind: 'began' | 'ended' | 'blocked') => void)[] = []
   const log: string[] = []
-  /** The screen lock's calls, apart from the engine's own: they are queued behind a microtask, so
-   *  interleaving them with the synchronous ones would pin an order nothing depends on. */
+  /** The screen lock's calls, apart from the engine's own: whether the capture is holding is a
+   *  different question from what the engine was asked to do. */
   const screen: string[] = []
-  const screenTags = new Set<string>()
   const engine: NativeAudioEngine = {
     requestPermission: overrides.permission ?? (async () => 'granted'),
     open: overrides.open ?? (async (sampleRate) => ({ opened: true, sampleRate })),
@@ -54,16 +46,8 @@ function createTestEngine(
       log.push('end')
     },
     screenLock: {
-      activate: (tag) => {
-        screen.push('+')
-        screenTags.add(tag)
-        return Promise.resolve()
-      },
-      deactivate: (tag) => {
-        screen.push('-')
-        screenTags.add(tag)
-        return Promise.resolve()
-      }
+      hold: () => screen.push('+'),
+      release: () => screen.push('-')
     },
     onMicrophoneData: (handler) => {
       microphone.push(handler)
@@ -87,7 +71,6 @@ function createTestEngine(
     engine,
     log,
     screen,
-    screenTags,
     /** How many handlers the engine is still calling. One per live capture, or a leak. */
     liveListeners: () => ({ microphone: microphone.length, interruptions: interruptions.length }),
     emit: (bytes: Uint8Array) => {
@@ -121,7 +104,7 @@ function decode(base64: string): Uint8Array {
 }
 
 describe('the audio verbs in the table', () => {
-  it('lists all four, each under a name a manifest grant may carry', () => {
+  it('lists all three, each under a name a manifest grant may carry', () => {
     for (const verb of AUDIO_VERBS) {
       expect(BRIDGE_NATIVE_VERB_NAMES, verb).toContain(verb)
       expect(BRIDGE_NATIVE_VERBS[verb], verb).toBeDefined()
@@ -166,15 +149,9 @@ describe('what the audio schemas refuse', () => {
     )
   })
 
-  it('refuses a stop carrying anything and a wakelock with no tag', () => {
+  it('refuses a stop carrying anything', () => {
     expect(audioStopParamsSchema.safeParse({ why: 'done' }).success).toBe(false)
     expect(audioStopParamsSchema.safeParse({}).success).toBe(true)
-    expect(wakelockSetParamsSchema.safeParse({ active: true }).success).toBe(false)
-    expect(wakelockSetParamsSchema.safeParse({ active: true, tag: '' }).success).toBe(false)
-    expect(wakelockSetParamsSchema.safeParse({ active: true, tag: 'x'.repeat(161) }).success).toBe(
-      false
-    )
-    expect(wakelockSetParamsSchema.safeParse({ active: true, tag: 'orca' }).success).toBe(true)
   })
 
   it('declares a base64 field a full drain still fits in', () => {
@@ -508,161 +485,14 @@ describe('the shell capture', () => {
   })
 })
 
-describe('the wake lock', () => {
-  it('holds a tag, answers what the device did, and gives it back', async () => {
-    const held: string[] = []
-    const { serve } = createNativeWakelockServer({
-      activate: async (tag) => {
-        held.push(`+${tag}`)
-      },
-      deactivate: async (tag) => {
-        held.push(`-${tag}`)
-      }
-    })
-    await expect(serve({ active: true, tag: 'orca-a' })).resolves.toEqual({ active: true })
-    await expect(serve({ active: false, tag: 'orca-a' })).resolves.toEqual({ active: false })
-    expect(held).toEqual(['+orca-a', '-orca-a'])
-  })
-
-  it('does not ask the device to drop a tag it never took', async () => {
-    const held: string[] = []
-    const { serve } = createNativeWakelockServer({
-      activate: async (tag) => {
-        held.push(`+${tag}`)
-      },
-      deactivate: async (tag) => {
-        held.push(`-${tag}`)
-      }
-    })
-    await expect(serve({ active: false, tag: 'orca-b' })).resolves.toEqual({ active: false })
-    expect(held).toEqual([])
-  })
-
-  it('reports a tag the device refused as not held', async () => {
-    const { serve } = createNativeWakelockServer({
-      activate: async () => {
-        throw new Error('no keep-awake on this device')
-      },
-      deactivate: async () => undefined
-    })
-    await expect(serve({ active: true, tag: 'orca-c' })).rejects.toBeInstanceOf(Error)
-  })
-
-  it('keeps a tag recorded when the device refused to drop it, so a retry reaches the device', async () => {
-    // The page's owner queues a failed deactivation and retries it (`pendingCleanupTags` in
-    // `mobile-dictation-keep-awake.ts`). That retry arrives here as another `active: false`, and it
-    // has to reach the device: a shell that had already forgotten the tag answers "not held"
-    // without calling anything, and the native tag stays on for the life of the app.
-    const calls: string[] = []
-    let refuse = true
-    const { serve } = createNativeWakelockServer({
-      activate: async (tag) => {
-        calls.push(`+${tag}`)
-      },
-      deactivate: async (tag) => {
-        calls.push(`-${tag}`)
-        if (refuse) {
-          throw new Error('the device would not drop the tag')
-        }
-      }
-    })
-    await serve({ active: true, tag: 'orca-f' })
-    // The refusal crosses, so the page's owner knows to queue a retry rather than believing it.
-    await expect(serve({ active: false, tag: 'orca-f' })).rejects.toBeInstanceOf(Error)
-    refuse = false
-    await expect(serve({ active: false, tag: 'orca-f' })).resolves.toEqual({ active: false })
-    expect(calls).toEqual(['+orca-f', '-orca-f', '-orca-f'])
-    // And once it is really gone, a third release asks the device nothing.
-    await expect(serve({ active: false, tag: 'orca-f' })).resolves.toEqual({ active: false })
-    expect(calls).toEqual(['+orca-f', '-orca-f', '-orca-f'])
-  })
-
-  it('keeps a tag a dispose could not drop, rather than forgetting it', async () => {
-    const calls: string[] = []
-    const { serve, dispose } = createNativeWakelockServer({
-      activate: async (tag) => {
-        calls.push(`+${tag}`)
-      },
-      deactivate: async (tag) => {
-        calls.push(`-${tag}`)
-        throw new Error('the device would not drop the tag')
-      }
-    })
-    await serve({ active: true, tag: 'orca-g' })
-    dispose()
-    await Promise.resolve()
-    await Promise.resolve()
-    // Still recorded, so the owner's retry is still able to reach the device through this server.
-    await expect(serve({ active: false, tag: 'orca-g' })).rejects.toBeInstanceOf(Error)
-    expect(calls).toEqual(['+orca-g', '-orca-g', '-orca-g'])
-  })
-
-  it('gives back a tag whose activation landed after the session ended', async () => {
-    // The page is a document that can be swiped away mid-dictation, so a dispose can fall between
-    // the activate call and its reply. A tag recorded after that dispose is held by nobody and
-    // keeps the screen awake for the app's lifetime.
-    const held: string[] = []
-    const gate: { release: () => void } = { release: () => {} }
-    const activated = new Promise<void>((resolve) => {
-      gate.release = resolve
-    })
-    const { serve, dispose } = createNativeWakelockServer({
-      activate: async (tag) => {
-        await activated
-        held.push(`+${tag}`)
-      },
-      deactivate: async (tag) => {
-        held.push(`-${tag}`)
-      }
-    })
-    const pending = serve({ active: true, tag: 'orca-late' })
-    dispose()
-    gate.release()
-    // Answered as not held, because by the time the device had it nobody wanted it.
-    await expect(pending).resolves.toEqual({ active: false })
-    await Promise.resolve()
-    expect(held).toEqual(['+orca-late', '-orca-late'])
-  })
-
-  it('gives back every tag it still holds when the session ends', async () => {
-    const held: string[] = []
-    const { serve, dispose } = createNativeWakelockServer({
-      activate: async (tag) => {
-        held.push(`+${tag}`)
-      },
-      deactivate: async (tag) => {
-        held.push(`-${tag}`)
-      }
-    })
-    await serve({ active: true, tag: 'orca-d' })
-    await serve({ active: true, tag: 'orca-e' })
-    await serve({ active: false, tag: 'orca-d' })
-    dispose()
-    await Promise.resolve()
-    // Only what was still held: a tag the page already gave back is not deactivated twice.
-    expect(held).toEqual(['+orca-d', '+orca-e', '-orca-d', '-orca-e'])
-    // And nothing is held afterwards, so a second dispose asks the device nothing.
-    dispose()
-    await Promise.resolve()
-    expect(held).toEqual(['+orca-d', '+orca-e', '-orca-d', '-orca-e'])
-  })
-})
-
 describe('the screen the shell holds awake while it is capturing', () => {
-  /** The lock's device calls are queued behind a microtask; a case reads them after they have run. */
-  const flushScreen = () => new Promise((resolve) => setTimeout(resolve, 0))
-
   it('takes the screen on a start and gives it back on a stop', async () => {
-    const { engine, screen, screenTags } = createTestEngine()
+    const { engine, screen } = createTestEngine()
     const capture = createNativeAudioCapture(engine)
     await capture.serve('native.audio.start', { sampleRate: 16_000 })
-    await flushScreen()
     expect(screen).toEqual(['+'])
     await capture.serve('native.audio.stop', {})
-    await flushScreen()
     expect(screen).toEqual(['+', '-'])
-    // One tag, and the module's own: the page has no say in it and never names it.
-    expect(screenTags.size).toBe(1)
   })
 
   it('gives it back when the page session ends with a capture still open', async () => {
@@ -670,7 +500,6 @@ describe('the screen the shell holds awake while it is capturing', () => {
     const capture = createNativeAudioCapture(engine)
     await capture.serve('native.audio.start', { sampleRate: 16_000 })
     capture.dispose()
-    await flushScreen()
     expect(screen).toEqual(['+', '-'])
   })
 
@@ -678,7 +507,6 @@ describe('the screen the shell holds awake while it is capturing', () => {
     const { engine, screen } = createTestEngine({ permission: async () => 'denied' })
     const capture = createNativeAudioCapture(engine)
     await capture.serve('native.audio.start', { sampleRate: 16_000 })
-    await flushScreen()
     expect(screen).toEqual([])
   })
 
@@ -692,7 +520,6 @@ describe('the screen the shell holds awake while it is capturing', () => {
     await expect(capture.serve('native.audio.start', { sampleRate: 16_000 })).rejects.toThrow(
       'would not start'
     )
-    await flushScreen()
     // The throw leaves no capture behind, so it leaves no screen held either.
     expect(screen).toEqual(['+', '-'])
   })
@@ -702,12 +529,10 @@ describe('the screen the shell holds awake while it is capturing', () => {
     const capture = createNativeAudioCapture(engine)
     await capture.serve('native.audio.start', { sampleRate: 16_000 })
     await capture.serve('native.audio.start', { sampleRate: 16_000 })
-    await flushScreen()
     // The replacement ends the first capture and opens its own: one tag out at a time, never two
     // activations the second of which nothing will ever give back.
     expect(screen).toEqual(['+', '-', '+'])
     capture.dispose()
-    await flushScreen()
     expect(screen).toEqual(['+', '-', '+', '-'])
   })
 })

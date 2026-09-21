@@ -10,7 +10,7 @@ import {
 import type { BridgeNativeVerb } from '../mobile-web-shell/bridge/bridge-native-verbs'
 import { BridgeNativeVerbRefusedError } from '../mobile-web-shell/bridge-host-errors'
 import { bytesToBase64 } from '../hooks/mobile-dictation-session-state'
-import { createMicrophoneScreenLock, type ScreenLockDevice } from './microphone-screen-lock'
+import type { MicrophoneScreenLock } from './microphone-screen-lock'
 
 /**
  * The device side of `native.audio.start`, `read` and `stop`.
@@ -38,7 +38,7 @@ export type NativeAudioEngine = {
   readonly end: () => void
   /** The screen, which an open microphone holds: a lock mid-capture suspends the app and takes the
    *  audio with it. Injectable for the engine's own reason — `expo-keep-awake` is a device call. */
-  readonly screenLock: ScreenLockDevice
+  readonly screenLock: MicrophoneScreenLock
   readonly onMicrophoneData: (handler: (bytes: Uint8Array) => void) => { remove: () => void }
   readonly onInterruption: (handler: (kind: BridgeAudioInterruption) => void) => {
     remove: () => void
@@ -114,12 +114,8 @@ export type NativeAudioCapture = {
   readonly dispose: () => void
 }
 
-/** One tag for the one capture a page session can have, minted here rather than asked for: the
- *  page has no say in the screen and never names it. */
-const NATIVE_AUDIO_SCREEN_LOCK_TAG = 'orca-shell-microphone'
-
 export function createNativeAudioCapture(engine: NativeAudioEngine): NativeAudioCapture {
-  const screen = createMicrophoneScreenLock(engine.screenLock, NATIVE_AUDIO_SCREEN_LOCK_TAG)
+  const screen = engine.screenLock
   let capture: Capture | null = null
   let disposed = false
   /**
