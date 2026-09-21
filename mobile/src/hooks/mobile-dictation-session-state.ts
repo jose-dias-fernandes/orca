@@ -48,18 +48,14 @@ export function isCurrentMobileDictationStart(
   return currentGeneration === generation && enabled && activeId === dictationId
 }
 
+/** A finish is still this dictation's while nothing has superseded it: `cancel`, a disable, an
+ *  unmount and a newer start each bump the generation or clear the active id, and most do both. */
 export function isCurrentMobileDictationFinish(
   currentGeneration: number,
   generation: number,
   enabled: boolean,
   activeId: string | null,
-  finishingId: string | null,
   dictationId: string
 ): boolean {
-  return (
-    currentGeneration === generation &&
-    enabled &&
-    activeId === dictationId &&
-    finishingId === dictationId
-  )
+  return currentGeneration === generation && enabled && activeId === dictationId
 }

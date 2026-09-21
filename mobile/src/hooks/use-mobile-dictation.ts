@@ -46,7 +46,6 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
   const pendingAudioBudgetRef = useRef(new MobileDictationPendingAudioBudget())
   const acceptingChunksRef = useRef(false)
   const generationRef = useRef(0)
-  const finishingIdRef = useRef<string | null>(null)
 
   useLayoutEffect(() => {
     // Native audio events can arrive before passive Effects flush, but refs
@@ -103,8 +102,7 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
     const audioChunkQueue = {
       pendingChunks: pendingChunksRef.current,
       pendingAudioBudget: pendingAudioBudgetRef.current,
-      shouldReleaseBudget: (id: string) =>
-        activeIdRef.current === id || finishingIdRef.current === id,
+      shouldReleaseBudget: (id: string) => activeIdRef.current === id,
       failActiveDictation
     }
     const sub = capture.onChunk((chunk) => {
@@ -206,7 +204,6 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
 
     const generation = generationRef.current + 1
     generationRef.current = generation
-    finishingIdRef.current = dictationId
     setStatus('processing')
     try {
       // Inside the try so a throwing native shutdown still runs the finally
@@ -225,7 +222,6 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
           generation,
           enabledRef.current,
           activeIdRef.current,
-          finishingIdRef.current,
           dictationId
         )
       ) {
@@ -244,7 +240,6 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
           generation,
           enabledRef.current,
           activeIdRef.current,
-          finishingIdRef.current,
           dictationId
         )
       ) {
@@ -253,7 +248,6 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
       const transcript = rpcPayloadMember(finished, 'text')
       const text = typeof transcript === 'string' ? transcript.trim() : ''
       activeIdRef.current = null
-      finishingIdRef.current = null
       pendingChunksRef.current.clear()
       pendingAudioBudgetRef.current.reset()
       setStatus('idle')
@@ -268,9 +262,6 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
       // Hold the wake tag through chunk drain and the finish RPC: a screen
       // lock mid-processing suspends the app and loses the transcript.
       void keepAwakeOwner.release(dictationId).catch(() => undefined)
-      if (finishingIdRef.current === dictationId) {
-        finishingIdRef.current = null
-      }
     }
   }, [capture, failActiveDictation, keepAwakeOwner])
 
@@ -279,7 +270,6 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
     const dictationId = activeIdRef.current
     generationRef.current += 1
     activeIdRef.current = null
-    finishingIdRef.current = null
     closeDictationAudio(dictationId)
     if (client && dictationId) {
       await dictationSessionCancel.request(client, { dictationId }).catch(() => undefined)
@@ -308,7 +298,6 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
       const dictationId = activeIdRef.current
       generationRef.current += 1
       activeIdRef.current = null
-      finishingIdRef.current = null
       closeDictationAudio(dictationId)
       capture.release()
       if (clientRef.current && dictationId) {
