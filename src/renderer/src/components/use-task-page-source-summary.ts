@@ -153,8 +153,7 @@ export function useTaskPageSourceSummary(model: TaskPageSourceAvailabilityPrelud
     accountBackedTaskSourceHostAvailability,
     accountBackedTaskSourceHostId,
     hostLabelById,
-    taskSourceHostAvailability,
-    taskSourceRepoContexts
+    taskSourceHostAvailability
   ])
   const taskSourceAvailabilityNotice = useMemo(() => {
     const providerLabel =

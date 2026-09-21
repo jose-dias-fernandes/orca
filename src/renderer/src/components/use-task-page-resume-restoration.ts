@@ -94,16 +94,8 @@ export function useTaskPageResumeRestoration(model: TaskPageBusinessmapListState
     setActiveJiraPreset(jiraPreset)
     setJiraSearchInput(jiraQuery)
     setAppliedJiraSearch(jiraQuery)
-    // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: businessmap resume keys mirror jiraPreset/jiraQuery and land with the shared TaskResumeState union update; cast reads local-only until then.
-    const businessmapResume = taskResumeState as unknown as
-      | {
-          businessmapPreset?: 'assigned' | 'all' | 'done'
-          businessmapQuery?: string
-        }
-      | null
-      | undefined
-    const businessmapPreset = businessmapResume?.businessmapPreset ?? 'assigned'
-    const businessmapQuery = businessmapResume?.businessmapQuery ?? ''
+    const businessmapPreset = taskResumeState?.businessmapPreset ?? 'assigned'
+    const businessmapQuery = taskResumeState?.businessmapQuery ?? ''
     setActiveBusinessmapPreset(businessmapPreset)
     setBusinessmapSearchInput(businessmapQuery)
     setAppliedBusinessmapSearch(businessmapQuery)

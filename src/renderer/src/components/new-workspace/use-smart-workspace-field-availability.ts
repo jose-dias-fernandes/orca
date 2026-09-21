@@ -247,8 +247,11 @@ export function useSmartWorkspaceFieldAvailability({
     setGithubItems,
     setGithubLoading,
     setGitlabItems,
+    setGitlabLoading,
     setLinearIssues,
     setLinearLoading,
+    setJiraIssues,
+    setJiraLoading,
     setBusinessmapCards,
     setBusinessmapLoading,
     setOpen

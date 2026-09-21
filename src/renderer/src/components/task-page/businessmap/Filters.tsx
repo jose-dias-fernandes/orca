@@ -6,6 +6,7 @@ import { translate } from '@/i18n/i18n'
 import { LoaderCircle, Plus, RefreshCw, Search, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { shouldSuppressEnterSubmit } from '@/lib/new-workspace-enter-guard'
+import { useAppStore } from '@/store'
 export function TaskPageBusinessmapFilters({
   model
 }: {
@@ -43,10 +44,9 @@ export function TaskPageBusinessmapFilters({
                   setAppliedBusinessmapSearch('')
                   setActiveBusinessmapPreset(preset.id)
                   setTaskResumeState({
-                    // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: businessmap resume keys mirror jiraPreset/jiraQuery and land with the shared TaskResumeState union update; local-only until then.
                     businessmapPreset: preset.id,
                     businessmapQuery: ''
-                  } as Parameters<typeof setTaskResumeState>[0])
+                  })
                   setBusinessmapRefreshNonce((n) => n + 1)
                 }}
                 className={cn(
@@ -68,8 +68,10 @@ export function TaskPageBusinessmapFilters({
                 variant="outline"
                 size="icon"
                 onClick={() => {
-                  setNewBusinessmapCardTitle('')
-                  setNewBusinessmapCardBody('')
+                  // Why: restore dismissed typed text (accidental dismissal recoverable); pickers keep their fresh open-time defaults.
+                  const draft = useAppStore.getState().newBusinessmapCardDraft
+                  setNewBusinessmapCardTitle(draft?.title ?? '')
+                  setNewBusinessmapCardBody(draft?.body ?? '')
                   setNewBusinessmapCardBoardId(availableBusinessmapBoards[0]?.id ?? null)
                   setNewBusinessmapCardOpen(true)
                 }}
@@ -142,9 +144,8 @@ export function TaskPageBusinessmapFilters({
                 setBusinessmapSearchInput(trimmed)
                 setAppliedBusinessmapSearch(trimmed)
                 setTaskResumeState({
-                  // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: businessmap resume keys mirror jiraPreset/jiraQuery and land with the shared TaskResumeState union update; local-only until then.
                   businessmapQuery: trimmed
-                } as Parameters<typeof setTaskResumeState>[0])
+                })
                 setBusinessmapRefreshNonce((n) => n + 1)
               }
             }}
@@ -161,10 +162,8 @@ export function TaskPageBusinessmapFilters({
                 setBusinessmapSearchInput('')
                 setAppliedBusinessmapSearch('')
                 setTaskResumeState({
-                  // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: businessmap resume keys mirror jiraPreset/jiraQuery and land with the shared TaskResumeState union update; local-only until then.
                   businessmapQuery: ''
-                } as Parameters<typeof setTaskResumeState>[0])
-                setBusinessmapRefreshNonce((n) => n + 1)
+                })
               }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition hover:text-foreground"
             >

@@ -21,8 +21,8 @@ type StoreState = {
   openSettingsTarget: (target: { pane: string; repoId: string | null }) => void
 }
 
-const mocks = vi.hoisted(() => ({
-  store: { current: null as StoreState | null }
+const mocks = vi.hoisted((): { store: { current: StoreState | null } } => ({
+  store: { current: null }
 }))
 
 vi.mock('@/store', () => ({

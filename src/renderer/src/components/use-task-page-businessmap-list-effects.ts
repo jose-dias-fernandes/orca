@@ -45,9 +45,8 @@ export function useTaskPageBusinessmapListEffects(model: TaskPageJiraListEffects
       return
     }
     setTaskResumeState({
-      // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: businessmap resume keys mirror the jira keys and land with the shared TaskResumeState union update; local-only until then.
       businessmapQuery: appliedBusinessmapSearch.trim()
-    } as Parameters<typeof setTaskResumeState>[0])
+    })
   }, [
     appliedBusinessmapSearch,
     setTaskResumeState,

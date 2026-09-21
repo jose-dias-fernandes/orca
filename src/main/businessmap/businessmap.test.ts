@@ -13,7 +13,7 @@ const { netFetchMock, resolveProxyMock, setProxyMock, handleMock } = vi.hoisted(
 }))
 
 let tempHome = ''
-let fetchMock: ReturnType<typeof vi.fn>
+let fetchMock: ReturnType<typeof vi.fn<() => Promise<Response>>>
 
 function tokenPathForSite(siteId: string): string {
   return join(
@@ -68,7 +68,6 @@ async function loadBusinessmapModule(): Promise<BusinessmapTestModule> {
       defaultSession: { resolveProxy: resolveProxyMock, setProxy: setProxyMock }
     }
   }))
-  // oxlint-disable-next-line typescript/no-unsafe-function-type -- SAFETY: mirrors the jira client.test.ts mock; the proxy session stub only needs resolveProxy/setProxy.
   const httpClient = await import('../network/http-client')
   httpClient.setMainHttpClient({
     fetch: (url, init) => netFetchMock(url, init),
@@ -100,14 +99,14 @@ async function loadBusinessmapModule(): Promise<BusinessmapTestModule> {
 
 beforeEach(() => {
   tempHome = mkdtempSync(join(tmpdir(), 'orca-bm-'))
-  fetchMock = vi.fn(async () => {
+  fetchMock = vi.fn<() => Promise<Response>>(() => {
     throw new Error('fetch should not be called')
   })
   netFetchMock.mockReset()
   resolveProxyMock.mockReset()
   setProxyMock.mockReset()
   resolveProxyMock.mockResolvedValue('DIRECT')
-  globalThis.fetch = fetchMock as typeof fetch
+  globalThis.fetch = fetchMock
   vi.restoreAllMocks()
 })
 
@@ -367,10 +366,9 @@ describe('Businessmap main backend', () => {
     const bm = await loadBusinessmapModule()
     const channels = new Set<string>()
     handleMock.mockReset()
-    // oxlint-disable-next-line typescript/no-unsafe-function-type -- SAFETY: test double only records the channel name; the handler itself is never invoked.
-    handleMock.mockImplementation(((channel: string) => {
+    handleMock.mockImplementation((channel: string) => {
       channels.add(channel)
-    }) as never)
+    })
     bm.registerBusinessmapHandlers()
     for (const channel of [
       'businessmap:connect',

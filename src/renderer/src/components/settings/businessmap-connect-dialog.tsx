@@ -13,7 +13,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useMountedRef } from '@/hooks/useMountedRef'
-import { cn } from '@/lib/utils'
 import { preventOutsideDismissWhenDirty } from '@/lib/outside-dismiss-guard'
 import { hasRemoteProviderRuntime } from '@/lib/provider-runtime-context'
 import { useAppStore } from '@/store'
@@ -27,8 +26,6 @@ type BusinessmapConnectDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onConnected?: () => void
-  overlayClassName?: string
-  contentClassName?: string
 }
 
 type ConnectState = 'idle' | 'connecting' | 'error'
@@ -38,9 +35,7 @@ type ConnectState = 'idle' | 'connecting' | 'error'
 export function BusinessmapConnectDialog({
   open,
   onOpenChange,
-  onConnected,
-  overlayClassName,
-  contentClassName
+  onConnected
 }: BusinessmapConnectDialogProps): React.JSX.Element {
   const connectBusinessmap = useAppStore((s) => s.connectBusinessmap)
   const settings = useAppStore((s) => s.settings)
@@ -140,13 +135,12 @@ export function BusinessmapConnectDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        overlayClassName={overlayClassName}
-        className={cn('sm:max-w-md', contentClassName)}
+        className="sm:max-w-md"
         onPointerDownOutside={guardOutsideDismiss}
         onInteractOutside={guardOutsideDismiss}
       >
-        <DialogHeader className="gap-3">
-          <DialogTitle className="leading-tight">
+        <DialogHeader>
+          <DialogTitle>
             {translate('auto.components.businessmap.connect.dialog.title', 'Connect Businessmap')}
           </DialogTitle>
           <DialogDescription>
@@ -166,7 +160,7 @@ export function BusinessmapConnectDialog({
         >
           <div className="flex flex-col gap-3">
             <div className="space-y-2">
-              <Label htmlFor={subdomainId} className="text-xs">
+              <Label htmlFor={subdomainId}>
                 {translate('auto.components.businessmap.connect.dialog.subdomain', 'Subdomain')}
               </Label>
               <Input
@@ -190,11 +184,13 @@ export function BusinessmapConnectDialog({
               variant="outline"
               value={domain}
               disabled={connectState === 'connecting'}
-              onValueChange={(value) => {
-                if (!value || connectState === 'connecting') {
+              onValueChange={(value: string) => {
+                if (connectState === 'connecting') {
                   return
                 }
-                setDomain(value as BusinessmapDomain)
+                if (value === 'businessmap.io' || value === 'kanbanize.com') {
+                  setDomain(value)
+                }
                 clearErrorOnEdit()
               }}
               aria-label={translate(
@@ -202,15 +198,15 @@ export function BusinessmapConnectDialog({
                 'Businessmap domain'
               )}
             >
-              <ToggleGroupItem value="businessmap.io" className="h-8 px-3 text-xs">
+              <ToggleGroupItem value="businessmap.io" size="sm">
                 businessmap.io
               </ToggleGroupItem>
-              <ToggleGroupItem value="kanbanize.com" className="h-8 px-3 text-xs">
+              <ToggleGroupItem value="kanbanize.com" size="sm">
                 kanbanize.com
               </ToggleGroupItem>
             </ToggleGroup>
             <div className="space-y-2">
-              <Label htmlFor={apiKeyId} className="text-xs">
+              <Label htmlFor={apiKeyId}>
                 {translate('auto.components.businessmap.connect.dialog.apiKey', 'API key')}
               </Label>
               <Input

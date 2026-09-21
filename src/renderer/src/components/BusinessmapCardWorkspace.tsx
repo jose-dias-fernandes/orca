@@ -212,7 +212,7 @@ export default function BusinessmapCardWorkspace({
       <SheetContent
         side="right"
         showCloseButton={false}
-        className="w-[min(92vw,780px)] p-0 sm:max-w-[780px]"
+        className="w-full sm:max-w-[640px]"
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
         <VisuallyHidden.Root asChild>
@@ -271,7 +271,7 @@ export default function BusinessmapCardWorkspace({
                 <Input
                   value={titleDraft}
                   onChange={(event) => setTitleDraft(event.target.value)}
-                  className="h-8 text-xs"
+                  className="h-8"
                 />
                 <Button
                   variant="outline"
@@ -292,7 +292,7 @@ export default function BusinessmapCardWorkspace({
                 <Textarea
                   value={descriptionDraft}
                   onChange={(event) => setDescriptionDraft(event.target.value)}
-                  className="min-h-20 text-xs"
+                  className="min-h-20"
                 />
                 <Button
                   variant="outline"
@@ -364,7 +364,7 @@ export default function BusinessmapCardWorkspace({
                   'auto.components.JiraIssueWorkspace.addComment',
                   'Add a comment…'
                 )}
-                className="h-8 text-xs"
+                className="h-8"
               />
               <Button
                 size="sm"

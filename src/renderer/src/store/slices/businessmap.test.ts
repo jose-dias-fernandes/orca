@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { create } from 'zustand'
 import type { AppState } from '../types'
+import type { GlobalSettings } from '../../../../shared/global-settings-types'
+import { getDefaultSettings } from '../../../../shared/constants'
 import type {
   BusinessmapCard,
   BusinessmapConnectionStatus,
@@ -62,7 +64,7 @@ function deferred<T>() {
 }
 
 function status(subdomain: string): BusinessmapConnectionStatus {
-  return { connected: true, viewer: { displayName: 'Ada', subdomain } as BusinessmapViewer }
+  return { connected: true, viewer: { displayName: 'Ada', subdomain } }
 }
 
 function card(id: number): BusinessmapCard {
@@ -96,6 +98,12 @@ describe('createBusinessmapSlice runtime context', () => {
     vi.clearAllMocks()
   })
 
+  // Why: GlobalSettings has 100+ required fields; spread full defaults and override one key.
+  function runtimeSettingsState(environmentId: string): { settings: GlobalSettings } {
+    return {
+      settings: { ...getDefaultSettings('/tmp'), activeRuntimeEnvironmentId: environmentId }
+    }
+  }
   it('ignores stale status responses after the active runtime changes', async () => {
     const store = createTestStore()
     const localStatus = deferred<BusinessmapConnectionStatus>()
@@ -105,7 +113,7 @@ describe('createBusinessmapSlice runtime context', () => {
       .mockReturnValueOnce(remoteStatus.promise)
 
     const localRequest = store.getState().checkBusinessmapConnection()
-    store.setState({ settings: { activeRuntimeEnvironmentId: 'runtime-1' } as never })
+    store.setState(runtimeSettingsState('runtime-1'))
     const remoteRequest = store.getState().checkBusinessmapConnection()
 
     remoteStatus.resolve(status('remote'))
@@ -128,7 +136,7 @@ describe('createBusinessmapSlice runtime context', () => {
       .mockReturnValueOnce(remoteCard.promise)
 
     const localRequest = store.getState().fetchBusinessmapCard(42)
-    store.setState({ settings: { activeRuntimeEnvironmentId: 'runtime-1' } as never })
+    store.setState(runtimeSettingsState('runtime-1'))
     const remoteRequest = store.getState().fetchBusinessmapCard(42)
 
     remoteCard.resolve({ ...card(42), title: 'Remote card' })
@@ -203,7 +211,7 @@ describe('createBusinessmapSlice runtime context', () => {
     businessmapListCards.mockReturnValueOnce(sourceResult.promise)
 
     const request = store.getState().listBusinessmapCards('assigned', 30, { sourceContext })
-    store.setState({ settings: { activeRuntimeEnvironmentId: 'focused-runtime' } as never })
+    store.setState(runtimeSettingsState('focused-runtime'))
 
     sourceResult.resolve([{ ...card(1), title: 'Source card' }])
     await expect(request).resolves.toMatchObject([{ id: 1, title: 'Source card' }])
@@ -216,9 +224,9 @@ describe('createBusinessmapSlice runtime context', () => {
 
   it('keeps isolated status failures from mutating the focused Businessmap settings state', async () => {
     const store = createTestStore()
-    const focusedStatus = {
+    const focusedStatus: BusinessmapConnectionStatus = {
       connected: true,
-      viewer: { displayName: 'Ada', subdomain: 'focused' } as BusinessmapViewer,
+      viewer: { displayName: 'Ada', subdomain: 'focused' },
       selectedSiteId: 'site-1'
     }
     store.setState({
@@ -246,7 +254,7 @@ describe('createBusinessmapSlice runtime context', () => {
       subdomain: 'acme',
       apiKey: 'token'
     })
-    store.setState({ settings: { activeRuntimeEnvironmentId: 'runtime-1' } as never })
+    store.setState(runtimeSettingsState('runtime-1'))
 
     connectResult.resolve({ ok: true, viewer: { displayName: 'Ada', subdomain: 'acme' } })
     await expect(request).resolves.toEqual({
@@ -263,7 +271,7 @@ describe('createBusinessmapSlice runtime context', () => {
     businessmapTestConnection.mockReturnValueOnce(testResult.promise)
 
     const request = store.getState().testBusinessmapConnection()
-    store.setState({ settings: { activeRuntimeEnvironmentId: 'runtime-1' } as never })
+    store.setState(runtimeSettingsState('runtime-1'))
 
     testResult.resolve({ ok: true, viewer: { displayName: 'Ada', subdomain: 'acme' } })
     await request
@@ -276,7 +284,7 @@ describe('createBusinessmapSlice runtime context', () => {
     businessmapDisconnect.mockReturnValueOnce(disconnectResult.promise)
 
     const request = store.getState().disconnectBusinessmap()
-    store.setState({ settings: { activeRuntimeEnvironmentId: 'runtime-1' } as never })
+    store.setState(runtimeSettingsState('runtime-1'))
 
     disconnectResult.resolve()
     await request

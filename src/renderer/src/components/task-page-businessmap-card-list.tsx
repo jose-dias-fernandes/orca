@@ -219,7 +219,7 @@ export function TaskPageBusinessmapCardList({
   const sections = useMemo(() => groupBusinessmapCardsByColumn(cards), [cards])
 
   return (
-    <div className="divide-y divide-border/50">
+    <div>
       {sections.map((section) => {
         const open = !collapsedGroups.has(section.key)
         return (
@@ -239,10 +239,9 @@ export function TaskPageBusinessmapCardList({
             }}
           >
             <CollapsibleTrigger asChild>
-              <Button
+              <button
                 type="button"
-                variant="ghost"
-                className="h-9 w-full justify-start rounded-none bg-muted/35 px-3 text-left font-normal transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                className="flex h-9 w-full items-center justify-start gap-2 px-3 text-left"
               >
                 {open ? (
                   <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
@@ -255,9 +254,9 @@ export function TaskPageBusinessmapCardList({
                 <span className="shrink-0 text-[11px] text-muted-foreground">
                   {section.cards.length}
                 </span>
-              </Button>
+              </button>
             </CollapsibleTrigger>
-            <CollapsibleContent className="divide-y divide-border/50 border-t border-border/50">
+            <CollapsibleContent>
               {section.cards.map((card) => (
                 <BusinessmapCardRow
                   key={card.id}

@@ -97,13 +97,14 @@ export function TaskPageBusinessmapSortControls({
         </span>
         <Select
           value={orderBy}
-          onValueChange={(value) => onSort(value as BusinessmapCardSortColumn)}
+          onValueChange={(value: string) => {
+            const column = columns.find((candidate) => candidate.id === value)
+            if (column) {
+              onSort(column.id)
+            }
+          }}
         >
-          <SelectTrigger
-            size="sm"
-            aria-label={sortByLabel}
-            className="min-w-0 flex-1 border-border/50 bg-background text-xs shadow-none"
-          >
+          <SelectTrigger size="sm" aria-label={sortByLabel} className="min-w-0 flex-1">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

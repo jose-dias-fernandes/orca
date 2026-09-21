@@ -87,6 +87,7 @@ export function useTaskPageGlobalEffects(model: TaskPageBusinessmapCardCreationM
         capture: true
       })
   }, [
+    activeModal,
     closeTaskPage,
     dialogWorkItem,
     newIssueOpen,
