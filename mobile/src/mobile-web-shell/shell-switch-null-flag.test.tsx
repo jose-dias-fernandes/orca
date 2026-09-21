@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type SwitchDependencies = {
   storage: Map<string, string>
+  /** What bounds the neutral window on a released phone; see the last case in this file. */
+  reads: number
   /** Committed mounts, not renders: React may discard a render, and what this file is about is
    *  what the user was shown. */
   natives: string[]
@@ -13,6 +15,7 @@ type SwitchDependencies = {
 
 const dependencies = vi.hoisted((): SwitchDependencies => ({
   storage: new Map(),
+  reads: 0,
   natives: [],
   shells: [],
   params: {}
@@ -33,7 +36,10 @@ const nativeScreen = vi.hoisted(
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
-    getItem: async (key: string) => dependencies.storage.get(key) ?? null,
+    getItem: async (key: string) => {
+      dependencies.reads += 1
+      return dependencies.storage.get(key) ?? null
+    },
     setItem: async (key: string, value: string) => {
       dependencies.storage.set(key, value)
     }
@@ -202,6 +208,7 @@ function renderUnsettled(Route: ComponentType): ReactTestRenderer {
 describe.each(SWITCHES)('the $name switch while the flag is unresolved', (entry) => {
   beforeEach(() => {
     dependencies.storage.clear()
+    dependencies.reads = 0
     dependencies.natives.length = 0
     dependencies.shells.length = 0
     dependencies.params = { ...entry.params }
@@ -231,5 +238,22 @@ describe.each(SWITCHES)('the $name switch while the flag is unresolved', (entry)
     expect(dependencies.natives).toEqual([entry.native])
     expect(dependencies.shells).toEqual([])
     expect(byName(tree, 'ActivityIndicator')).toEqual([])
+  })
+
+  it('reaches no storage at all on a release build, which is what bounds the window', async () => {
+    // How long a released phone spends on the neutral state, which is the only thing this change
+    // costs a user with the flag off. `loadMobileWebShellEnabled` answers `false` outside `__DEV__`
+    // before it looks at the key, so the window is not an AsyncStorage round trip across the
+    // bridge — it is React's own passive-effect flush and one microtask, and the switch has its
+    // answer on the first turn after the first commit.
+    Object.assign(globalThis, { __DEV__: false })
+    dependencies.storage.set(FLAG_KEY, 'true')
+    renderUnsettled(entry.Route)
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(dependencies.reads).toBe(0)
+    expect(dependencies.natives).toEqual([entry.native])
+    expect(dependencies.shells).toEqual([])
   })
 })
