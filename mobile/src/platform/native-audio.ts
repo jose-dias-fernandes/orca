@@ -255,7 +255,16 @@ export function createNativeAudioCapture(engine: NativeAudioEngine): NativeAudio
       audioStopParamsSchema.parse(params)
       // Queued so a stop that followed a start ends the capture that start opened, rather than
       // finding nothing and leaving a live microphone behind it.
-      return enqueue(async () => ({ stopped: end() }))
+      return enqueue(async () => {
+        // Drained before the capture goes, because ending it takes the ring with it. This is the
+        // audio produced since the page's last read, which is the tail of the utterance.
+        const drained = capture?.ring.drain(BRIDGE_AUDIO_RING_MAX_BYTES)
+        return {
+          stopped: end(),
+          base64: drained === undefined ? '' : bytesToBase64(drained.bytes),
+          droppedBytes: drained?.droppedBytes ?? 0
+        }
+      })
     },
     dispose: () => {
       disposed = true

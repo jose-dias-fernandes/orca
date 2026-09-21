@@ -147,9 +147,27 @@ export type BridgeAudioChunk = z.infer<typeof audioReadResultSchema>
 /** No params: there is one capture per page session, so there is nothing to name. */
 export const audioStopParamsSchema = z.strictObject({})
 
-/** False for a session that was not capturing, which is not a fault: a page that stops twice, or
- *  stops after an interruption already ended the capture, asked for the state it already has. */
-export const audioStopResultSchema = z.strictObject({ stopped: z.boolean() })
+/**
+ * The stop, and the tail it takes with it.
+ *
+ * `stopped` is false for a session that was not capturing, which is not a fault: a page that stops
+ * twice, or stops after an interruption already ended the capture, asked for the state it already
+ * has.
+ *
+ * The bytes are whatever the ring still held — up to one drain interval of what the user was still
+ * saying as they lifted the button, which no timer is coming for. Carried by the stop rather than
+ * fetched by a last read, because a page that has to read before it stops has an ordering to get
+ * right and a re-entry to guard; a reply that brings the tail with it has neither.
+ *
+ * Both tail fields default rather than being required. The page updates over the air and the shell
+ * does not, so a page this new can be talking to a shell that answers `stopped` alone: absent, that
+ * dictation loses its tail, where a required field would have lost it the stop itself.
+ */
+export const audioStopResultSchema = z.strictObject({
+  stopped: z.boolean(),
+  base64: z.string().max(BRIDGE_AUDIO_READ_MAX_BASE64_CHARS).regex(BASE64_PATTERN).default(''),
+  droppedBytes: z.number().int().nonnegative().default(0)
+})
 
 export const wakelockSetParamsSchema = z.strictObject({
   active: z.boolean(),

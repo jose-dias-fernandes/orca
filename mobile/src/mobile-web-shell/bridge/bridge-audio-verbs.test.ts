@@ -19,6 +19,7 @@ import {
   audioReadResultSchema,
   audioStartParamsSchema,
   audioStopParamsSchema,
+  audioStopResultSchema,
   wakelockSetParamsSchema
 } from './bridge-audio-verbs'
 import { BRIDGE_NATIVE_VERB_NAMES, BRIDGE_NATIVE_VERBS } from './bridge-native-verbs'
@@ -336,13 +337,21 @@ describe('the shell capture', () => {
     const { engine } = createTestEngine()
     const capture = createNativeAudioCapture(engine)
     await capture.serve('native.audio.start', { sampleRate: 16_000 })
-    await expect(capture.serve('native.audio.stop', {})).resolves.toEqual({ stopped: true })
+    await expect(capture.serve('native.audio.stop', {})).resolves.toEqual({
+      stopped: true,
+      base64: '',
+      droppedBytes: 0
+    })
     await expect(capture.serve('native.audio.read', { maxBytes: 1_024 })).rejects.toSatisfy(
       (error: unknown) =>
         error instanceof BridgeNativeVerbRefusedError && error.code === 'native_audio_not_capturing'
     )
     // A second stop is the state the page already has, not a fault.
-    await expect(capture.serve('native.audio.stop', {})).resolves.toEqual({ stopped: false })
+    await expect(capture.serve('native.audio.stop', {})).resolves.toEqual({
+      stopped: false,
+      base64: '',
+      droppedBytes: 0
+    })
   })
 
   it('refuses a read before any start', async () => {
@@ -483,7 +492,7 @@ describe('the shell capture', () => {
     await started
     // The stop runs after the start it followed, so it ends the capture that start opened rather
     // than finding nothing and leaving a live microphone behind it.
-    await expect(stopped).resolves.toEqual({ stopped: true })
+    await expect(stopped).resolves.toEqual({ stopped: true, base64: '', droppedBytes: 0 })
     expect(liveListeners()).toEqual({ microphone: 0, interruptions: 0 })
   })
 
@@ -700,5 +709,89 @@ describe('the screen the shell holds awake while it is capturing', () => {
     capture.dispose()
     await flushScreen()
     expect(screen).toEqual(['+', '-', '+', '-'])
+  })
+})
+
+describe('the tail the stop reply carries', () => {
+  it('answers with everything the ring still held', async () => {
+    const { engine, emit } = createTestEngine()
+    const capture = createNativeAudioCapture(engine)
+    await capture.serve('native.audio.start', { sampleRate: 16_000 })
+    const tail = pcm(12_288, 11)
+    emit(tail)
+    const stopped = audioStopResultSchema.parse(await capture.serve('native.audio.stop', {}))
+    expect(stopped.stopped).toBe(true)
+    expect(Array.from(decode(stopped.base64))).toEqual(Array.from(tail))
+    expect(stopped.droppedBytes).toBe(0)
+  })
+
+  it('hands a byte to the read or to the stop, never to both and never to neither', async () => {
+    const { engine, emit } = createTestEngine()
+    const capture = createNativeAudioCapture(engine)
+    await capture.serve('native.audio.start', { sampleRate: 16_000 })
+    const spoken = pcm(2_048, 3)
+    emit(spoken)
+    const read = audioReadResultSchema.parse(
+      await capture.serve('native.audio.read', { maxBytes: BRIDGE_AUDIO_RING_MAX_BYTES })
+    )
+    // What the microphone produced between that read and the stop, which is the audio no timer is
+    // ever coming for.
+    const after = pcm(1_024, 7)
+    emit(after)
+    const stopped = audioStopResultSchema.parse(await capture.serve('native.audio.stop', {}))
+    expect(Array.from(decode(read.base64))).toEqual(Array.from(spoken))
+    expect(Array.from(decode(stopped.base64))).toEqual(Array.from(after))
+  })
+
+  it('carries what the ring refused since the last read', async () => {
+    const { engine, emit } = createTestEngine()
+    const capture = createNativeAudioCapture(engine)
+    await capture.serve('native.audio.start', { sampleRate: 16_000 })
+    emit(pcm(BRIDGE_AUDIO_RING_MAX_BYTES))
+    emit(pcm(2_048))
+    const stopped = audioStopResultSchema.parse(await capture.serve('native.audio.stop', {}))
+    expect(stopped.droppedBytes).toBe(2_048)
+  })
+
+  it('answers no tail for a session that was not capturing', async () => {
+    const { engine } = createTestEngine()
+    const capture = createNativeAudioCapture(engine)
+    const stopped = audioStopResultSchema.parse(await capture.serve('native.audio.stop', {}))
+    expect(stopped).toEqual({ stopped: false, base64: '', droppedBytes: 0 })
+  })
+
+  it('leaves nothing behind for a second stop to answer with', async () => {
+    const { engine, emit } = createTestEngine()
+    const capture = createNativeAudioCapture(engine)
+    await capture.serve('native.audio.start', { sampleRate: 16_000 })
+    emit(pcm(512, 5))
+    await capture.serve('native.audio.stop', {})
+    const again = audioStopResultSchema.parse(await capture.serve('native.audio.stop', {}))
+    expect(again).toEqual({ stopped: false, base64: '', droppedBytes: 0 })
+  })
+
+  it('reads a reply from a shell too old to carry a tail', () => {
+    // The page updates over the air and the shell does not, so the page parses a stop reply from a
+    // build that answers `stopped` alone. It loses that dictation's tail; it must not lose the
+    // stop, which is what a required field would have cost.
+    expect(audioStopResultSchema.parse({ stopped: true })).toEqual({
+      stopped: true,
+      base64: '',
+      droppedBytes: 0
+    })
+  })
+
+  it('bounds the tail by the same budget a read is bounded by', () => {
+    expect(
+      audioStopResultSchema.safeParse({
+        stopped: true,
+        base64: 'A'.repeat(BRIDGE_AUDIO_READ_MAX_BASE64_CHARS + 1),
+        droppedBytes: 0
+      }).success
+    ).toBe(false)
+    expect(
+      audioStopResultSchema.safeParse({ stopped: true, base64: 'not base64!', droppedBytes: 0 })
+        .success
+    ).toBe(false)
   })
 })

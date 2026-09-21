@@ -79,8 +79,10 @@ export type NativeVerbs = {
   /** One drain of the shell's ring. `maxBytes` above the ring is refused by the shell's schema, so
    *  a caller bounds its own ask rather than discovering the bound as a rejection. */
   readAudio: (maxBytes: number) => Promise<BridgeAudioChunk>
-  /** False for a session that was not capturing, which is not a fault. */
-  stopAudio: () => Promise<boolean>
+  /** Ends the capture and brings back what the shell's ring still held, which is the tail of the
+   *  utterance no drain came back for. `stopped` is false for a session that was not capturing,
+   *  which is not a fault. */
+  stopAudio: () => Promise<z.infer<typeof audioStopResultSchema>>
   /** Whether the tag is held after the call. The shell asks the device nothing for a tag it never
    *  took, so releasing one twice is not a fault either. */
   setWakelock: (active: boolean, tag: string) => Promise<boolean>
@@ -223,7 +225,7 @@ export function useNativeVerbs(): NativeVerbs {
       startAudio: (sampleRate) =>
         call('native.audio.start', { sampleRate }, audioStartResultSchema),
       readAudio: (maxBytes) => call('native.audio.read', { maxBytes }, audioReadResultSchema),
-      stopAudio: async () => (await call('native.audio.stop', {}, audioStopResultSchema)).stopped,
+      stopAudio: () => call('native.audio.stop', {}, audioStopResultSchema),
       setWakelock: async (active, tag) =>
         (await call('native.wakelock.set', { active, tag }, wakelockSetResultSchema)).active
     }
