@@ -3,7 +3,7 @@
   "family": "speech.dictation-start",
   "namedDeltas": [],
   "runnerVersion": 1,
-  "baseline": "491eb35b4dc264456ce3a8f390169147e05e4485",
+  "baseline": "a1bdee9af903cf2a8c1a6c796460d6805af8f6dd",
   "lockfileSha256": "2bc53d3e8628a9bb8cbc51288065161216ea577912ab91961d8b026982774a0f",
   "recorderSha256": "f67c2f5b753d2a4f572599f6861fae8e6e917fe89ac75b58288f8e84be609d86",
   "adapterSha256": "5d978690e3626892b83bdba64537f9b1e1bb66c2060a00517ceead042a6d2334",
@@ -73,6 +73,40 @@
           "category": "Error",
           "message": "transport failure",
           "isRpcDeliveryUnknown": true
+        }
+      }
+    },
+    "217153ab0a32": {
+      "name": "speech.dictation.cancel#1",
+      "ordinal": 4,
+      "args": [
+        {
+          "name": "method",
+          "value": "speech.dictation.cancel"
+        },
+        {
+          "name": "params",
+          "value": {
+            "dictationId": "dictation-1"
+          }
+        },
+        {
+          "name": "options",
+          "value": {
+            "$rpc": "absent"
+          }
+        }
+      ],
+      "settlement": {
+        "status": "fulfilled",
+        "startedAt": 0,
+        "settledAt": 0,
+        "value": {
+          "id": "frame-2",
+          "ok": true,
+          "result": {
+            "cancelled": true
+          }
         }
       }
     },
@@ -321,6 +355,11 @@
       "settledAt": 0,
       "value": false
     },
+    "9369f4de87f0": {
+      "name": "rollback-recording",
+      "ordinal": 3,
+      "value": {}
+    },
     "a72f6bbdd0b3": {
       "name": "speech.dictation.start#1",
       "ordinal": 1,
@@ -437,6 +476,11 @@
         }
       }
     },
+    "d6e61920633f": {
+      "name": "speech.dictation.cancel#1",
+      "ordinal": 5,
+      "json": "{\"id\":\"frame-2\",\"deviceToken\":\"recording-device\",\"method\":\"speech.dictation.cancel\",\"params\":{\"dictationId\":\"dictation-1\"}}"
+    },
     "e0fcd8f8c1a9": {
       "activeId": {
         "$rpc": "null"
@@ -537,66 +581,66 @@
       {
         "id": "speech-desktop-start-superseded.outer-refused:stale-start-cancelled",
         "observation": {
-          "sender": ["5bd3d1bd4863", "73faa32df517"],
-          "payloads": ["a7ddd021010a", "ce9cbc8837fa"],
+          "sender": ["5bd3d1bd4863", "217153ab0a32"],
+          "payloads": ["a7ddd021010a", "d6e61920633f"],
           "settlements": {
             "supersede": "eb79a9b3682a",
             "start": "7ed3d39f0607"
           },
           "state": "e0fcd8f8c1a9",
-          "effects": []
+          "effects": ["9369f4de87f0"]
         }
       },
       {
         "id": "speech-desktop-start-superseded.outer-refused-no-message:stale-start-cancelled",
         "observation": {
-          "sender": ["ba48be88195e", "73faa32df517"],
-          "payloads": ["a7ddd021010a", "ce9cbc8837fa"],
+          "sender": ["ba48be88195e", "217153ab0a32"],
+          "payloads": ["a7ddd021010a", "d6e61920633f"],
           "settlements": {
             "supersede": "eb79a9b3682a",
             "start": "7ed3d39f0607"
           },
           "state": "e0fcd8f8c1a9",
-          "effects": []
+          "effects": ["9369f4de87f0"]
         }
       },
       {
         "id": "speech-desktop-start-superseded.method-not-found:stale-start-cancelled",
         "observation": {
-          "sender": ["3c4f020193c4", "73faa32df517"],
-          "payloads": ["a7ddd021010a", "ce9cbc8837fa"],
+          "sender": ["3c4f020193c4", "217153ab0a32"],
+          "payloads": ["a7ddd021010a", "d6e61920633f"],
           "settlements": {
             "supersede": "eb79a9b3682a",
             "start": "7ed3d39f0607"
           },
           "state": "e0fcd8f8c1a9",
-          "effects": []
+          "effects": ["9369f4de87f0"]
         }
       },
       {
         "id": "speech-desktop-start-superseded.transport-rejection:stale-start-cancelled",
         "observation": {
-          "sender": ["0ec7faed0e3d", "73faa32df517"],
-          "payloads": ["a7ddd021010a", "ce9cbc8837fa"],
+          "sender": ["0ec7faed0e3d", "217153ab0a32"],
+          "payloads": ["a7ddd021010a", "d6e61920633f"],
           "settlements": {
             "supersede": "eb79a9b3682a",
             "start": "7ed3d39f0607"
           },
           "state": "e0fcd8f8c1a9",
-          "effects": []
+          "effects": ["9369f4de87f0"]
         }
       },
       {
         "id": "speech-desktop-start-superseded.transport-rejection-no-message:stale-start-cancelled",
         "observation": {
-          "sender": ["50620ee89249", "73faa32df517"],
-          "payloads": ["a7ddd021010a", "ce9cbc8837fa"],
+          "sender": ["50620ee89249", "217153ab0a32"],
+          "payloads": ["a7ddd021010a", "d6e61920633f"],
           "settlements": {
             "supersede": "eb79a9b3682a",
             "start": "7ed3d39f0607"
           },
           "state": "e0fcd8f8c1a9",
-          "effects": []
+          "effects": ["9369f4de87f0"]
         }
       }
     ]
