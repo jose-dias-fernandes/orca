@@ -29,6 +29,7 @@ import {
 import { terminateWindowsProcessTree } from '../windows-process-tree-kill'
 import { installMainProcessTreeKillGate } from '../own-chromium-tree-kill-guard'
 import { _resetTracerForTests, setActiveSink } from '../observability/tracer'
+import { setLinuxCgroupMemoryLimitReaderForTest } from './linux-cgroup-memory-limit'
 
 /** The field shape: renderer, `reason=killed exitCode=1`, win32 (#G2). */
 function killedRendererEvent(): ProcessGoneCrashEvent {
@@ -68,6 +69,8 @@ async function recordKilledRenderer(): Promise<Record<string, unknown>> {
 }
 
 beforeEach(() => {
+  // Keep the comparison independent of host cgroup usage changing between the two crash records.
+  setLinuxCgroupMemoryLimitReaderForTest(() => undefined)
   setActiveSink({ push: () => {}, flush: () => {}, close: () => {} })
   clearCrashBreadcrumbsForTest()
   resetProcessGoneSiblingCorrelationForTest()
@@ -75,6 +78,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  setLinuxCgroupMemoryLimitReaderForTest(null)
   vi.restoreAllMocks()
   _resetTracerForTests()
   clearCrashBreadcrumbsForTest()
