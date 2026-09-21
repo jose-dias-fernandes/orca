@@ -215,8 +215,22 @@ const MERMAID_PACKAGE = 'node_modules/mermaid/'
  * and the two it reaches, `agent-session-conversation-name.ts` and `surrogate-safe-text-slice.ts`,
  * entered the page bundle between C7.7's measurement on `f07bf8544c` and its merge. Named by
  * diffing the closure at `f07bf8544c` against `2739246058`; nothing on the C7.7 side moved.
+ *
+ * Then ruling 36 gave the screen to the microphone and two local modules left:
+ * `src/hooks/mobile-dictation-keep-awake.ts` and
+ * `src/hooks/mobile-dictation-foreground-keep-awake.ts`, the page's wake-tag owner and its Android
+ * foreground re-acquire. Both are deleted rather than moved — the device module that opens the
+ * microphone takes the screen and gives it back — so the page has nothing left to own.
+ *
+ *   modules        4333 -> 4331   (-2)
+ *   local modules   991 ->  989   (-2)
+ *
+ * Measured on this merge rather than subtracted from the line above, and the two local lists
+ * diffed to name the difference: those two leave and nothing joins. The same measurement, taken
+ * before #22067 landed, is how this branch read main's pin of 4,330 as three modules stale — the
+ * three the paragraph above names.
  */
-const SESSION_ROUTE_MODULES = 4333
+const SESSION_ROUTE_MODULES = 4331
 
 /** What the page enters this route through once the route is a switch with a `.web.tsx` sibling. */
 const ROUTE_ENTRY = [
