@@ -53,6 +53,7 @@ function worktreeSetupWslenvEntries(env: Record<string, string | undefined>): st
   ]
 }
 
+/** Adds the host environment values required by a WSL PTY and its guest relay. */
 export function addOrcaWslInteropEnv(env: Record<string, string>): void {
   // Why set here: every WSL spawn path funnels through this helper, and the
   // in-guest login script needs the resolved wrapper root. Windows/WSL wrappers
