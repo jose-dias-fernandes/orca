@@ -209,8 +209,21 @@ const MERMAID_PACKAGE = 'node_modules/mermaid/'
  * declared beside the route-update accept, so `bridge-route-update.ts` and the
  * `shell-screen-route.ts` it reads a route key from now enter through the envelope as well. All
  * four are schema and string constants: the closure grew, the download did not gain a package.
+ *
+ * Then ruling 36 gave the screen to the microphone, and two local modules left:
+ * `src/hooks/mobile-dictation-keep-awake.ts` and
+ * `src/hooks/mobile-dictation-foreground-keep-awake.ts`, the page's wake-tag owner and its Android
+ * foreground re-acquire. Both are deleted rather than moved — the device module that opens the
+ * microphone takes the screen and gives it back — so the page has nothing left to own.
+ *
+ * The number below is measured on this merge, not summed off the line above it, and the two
+ * readings disagree about more than those two modules. `3cfb070294` measures 4,333 / 991 against
+ * its own pin of 4,330, so main was already red here by three modules this branch never touched;
+ * the merge measures 4,331 / 989, which is that 4,333 less exactly the two named above, confirmed
+ * by diffing the two local lists rather than by subtracting. Repinning to the measurement is
+ * therefore also what takes main's own closure test green again.
  */
-const SESSION_ROUTE_MODULES = 4330
+const SESSION_ROUTE_MODULES = 4331
 
 /** What the page enters this route through once the route is a switch with a `.web.tsx` sibling. */
 const ROUTE_ENTRY = [
