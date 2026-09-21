@@ -10,6 +10,7 @@ import {
 import type { BridgeNativeVerb } from '../mobile-web-shell/bridge/bridge-native-verbs'
 import { BridgeNativeVerbRefusedError } from '../mobile-web-shell/bridge-host-errors'
 import { bytesToBase64 } from '../hooks/mobile-dictation-session-state'
+import { createMicrophoneScreenLock, type ScreenLockDevice } from './microphone-screen-lock'
 
 /**
  * The device side of `native.audio.start`, `read` and `stop`.
@@ -35,6 +36,9 @@ export type NativeAudioEngine = {
   readonly begin: () => boolean
   /** Stops producing them and releases the session. Called on every exit, including a throw. */
   readonly end: () => void
+  /** The screen, which an open microphone holds: a lock mid-capture suspends the app and takes the
+   *  audio with it. Injectable for the engine's own reason — `expo-keep-awake` is a device call. */
+  readonly screenLock: ScreenLockDevice
   readonly onMicrophoneData: (handler: (bytes: Uint8Array) => void) => { remove: () => void }
   readonly onInterruption: (handler: (kind: BridgeAudioInterruption) => void) => {
     remove: () => void
@@ -110,7 +114,12 @@ export type NativeAudioCapture = {
   readonly dispose: () => void
 }
 
+/** One tag for the one capture a page session can have, minted here rather than asked for: the
+ *  page has no say in the screen and never names it. */
+const NATIVE_AUDIO_SCREEN_LOCK_TAG = 'orca-shell-microphone'
+
 export function createNativeAudioCapture(engine: NativeAudioEngine): NativeAudioCapture {
+  const screen = createMicrophoneScreenLock(engine.screenLock, NATIVE_AUDIO_SCREEN_LOCK_TAG)
   let capture: Capture | null = null
   let disposed = false
   /**
@@ -144,6 +153,7 @@ export function createNativeAudioCapture(engine: NativeAudioEngine): NativeAudio
     }
     capture.stopListening()
     capture = null
+    screen.release()
     engine.end()
     return true
   }
@@ -199,9 +209,17 @@ export function createNativeAudioCapture(engine: NativeAudioEngine): NativeAudio
       return { started: false, sampleRate: opened.sampleRate, permission }
     }
     capture = listen()
-    if (!engine.begin()) {
+    // The mic is open from here, so the screen is held from here — and given back by `end()`,
+    // which every exit below reaches, including the one an engine that throws takes.
+    screen.hold()
+    try {
+      if (!engine.begin()) {
+        end()
+        return { started: false, sampleRate: opened.sampleRate, permission }
+      }
+    } catch (error) {
       end()
-      return { started: false, sampleRate: opened.sampleRate, permission }
+      throw error
     }
     return { started: true, sampleRate: opened.sampleRate, permission }
   }

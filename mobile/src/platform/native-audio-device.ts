@@ -50,6 +50,7 @@ export const nativeAudioDeviceEngine: NativeAudioEngine = {
     toggleRecording(false)
     tearDown()
   },
+  screenLock: { activate: activateKeepAwakeAsync, deactivate: deactivateKeepAwake },
   onMicrophoneData: (handler) =>
     addExpoTwoWayAudioEventListener('onMicrophoneData', (event) => {
       const raw = event.data

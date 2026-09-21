@@ -41,12 +41,28 @@ function createTestEngine(
   const microphone: ((bytes: Uint8Array) => void)[] = []
   const interruptions: ((kind: 'began' | 'ended' | 'blocked') => void)[] = []
   const log: string[] = []
+  /** The screen lock's calls, apart from the engine's own: they are queued behind a microtask, so
+   *  interleaving them with the synchronous ones would pin an order nothing depends on. */
+  const screen: string[] = []
+  const screenTags = new Set<string>()
   const engine: NativeAudioEngine = {
     requestPermission: overrides.permission ?? (async () => 'granted'),
     open: overrides.open ?? (async (sampleRate) => ({ opened: true, sampleRate })),
     begin: overrides.begin ?? (() => true),
     end: () => {
       log.push('end')
+    },
+    screenLock: {
+      activate: (tag) => {
+        screen.push('+')
+        screenTags.add(tag)
+        return Promise.resolve()
+      },
+      deactivate: (tag) => {
+        screen.push('-')
+        screenTags.add(tag)
+        return Promise.resolve()
+      }
     },
     onMicrophoneData: (handler) => {
       microphone.push(handler)
@@ -69,6 +85,8 @@ function createTestEngine(
   return {
     engine,
     log,
+    screen,
+    screenTags,
     /** How many handlers the engine is still calling. One per live capture, or a leak. */
     liveListeners: () => ({ microphone: microphone.length, interruptions: interruptions.length }),
     emit: (bytes: Uint8Array) => {
@@ -618,5 +636,69 @@ describe('the wake lock', () => {
     dispose()
     await Promise.resolve()
     expect(held).toEqual(['+orca-d', '+orca-e', '-orca-d', '-orca-e'])
+  })
+})
+
+describe('the screen the shell holds awake while it is capturing', () => {
+  /** The lock's device calls are queued behind a microtask; a case reads them after they have run. */
+  const flushScreen = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it('takes the screen on a start and gives it back on a stop', async () => {
+    const { engine, screen, screenTags } = createTestEngine()
+    const capture = createNativeAudioCapture(engine)
+    await capture.serve('native.audio.start', { sampleRate: 16_000 })
+    await flushScreen()
+    expect(screen).toEqual(['+'])
+    await capture.serve('native.audio.stop', {})
+    await flushScreen()
+    expect(screen).toEqual(['+', '-'])
+    // One tag, and the module's own: the page has no say in it and never names it.
+    expect(screenTags.size).toBe(1)
+  })
+
+  it('gives it back when the page session ends with a capture still open', async () => {
+    const { engine, screen } = createTestEngine()
+    const capture = createNativeAudioCapture(engine)
+    await capture.serve('native.audio.start', { sampleRate: 16_000 })
+    capture.dispose()
+    await flushScreen()
+    expect(screen).toEqual(['+', '-'])
+  })
+
+  it('holds nothing for a start the device refused', async () => {
+    const { engine, screen } = createTestEngine({ permission: async () => 'denied' })
+    const capture = createNativeAudioCapture(engine)
+    await capture.serve('native.audio.start', { sampleRate: 16_000 })
+    await flushScreen()
+    expect(screen).toEqual([])
+  })
+
+  it('gives it back when the engine throws after the capture is open', async () => {
+    const { engine, screen } = createTestEngine({
+      begin: () => {
+        throw new Error('the audio engine would not start')
+      }
+    })
+    const capture = createNativeAudioCapture(engine)
+    await expect(capture.serve('native.audio.start', { sampleRate: 16_000 })).rejects.toThrow(
+      'would not start'
+    )
+    await flushScreen()
+    // The throw leaves no capture behind, so it leaves no screen held either.
+    expect(screen).toEqual(['+', '-'])
+  })
+
+  it('does not take it twice when a second start replaces the first', async () => {
+    const { engine, screen } = createTestEngine()
+    const capture = createNativeAudioCapture(engine)
+    await capture.serve('native.audio.start', { sampleRate: 16_000 })
+    await capture.serve('native.audio.start', { sampleRate: 16_000 })
+    await flushScreen()
+    // The replacement ends the first capture and opens its own: one tag out at a time, never two
+    // activations the second of which nothing will ever give back.
+    expect(screen).toEqual(['+', '-', '+'])
+    capture.dispose()
+    await flushScreen()
+    expect(screen).toEqual(['+', '-', '+', '-'])
   })
 })
