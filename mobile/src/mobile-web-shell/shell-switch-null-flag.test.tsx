@@ -120,7 +120,16 @@ const FLAG_KEY = 'orca:mobileWebShellEnabled'
  * could open. `native` is what that switch renders when the flag is off — a panel for most of them
  * and the refusal screen for the catch-all, which has no native screen behind it.
  */
-const SWITCHES = [
+type SwitchCase = {
+  readonly name: string
+  readonly Route: ComponentType
+  readonly params: Record<string, string | string[]>
+  /** What the mocked native screen pushes when it mounts. */
+  readonly native: string
+  readonly pathname: string
+}
+
+const SWITCHES: readonly SwitchCase[] = [
   {
     name: 'host list',
     Route: HostListRoute,
@@ -184,7 +193,7 @@ const SWITCHES = [
     native: 'catch-all',
     pathname: '/h/host-1/settings'
   }
-] as const
+]
 
 /** Host elements are matched by name: React's `ElementType` does not admit a host name, so the
  *  typed form is a predicate. */
