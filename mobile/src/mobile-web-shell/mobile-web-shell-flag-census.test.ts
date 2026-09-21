@@ -27,6 +27,8 @@ const REVIEW_ROUTE = 'app/h/[hostId]/review/[worktreeId].tsx'
 const SESSION_ROUTE = 'app/h/[hostId]/session/[worktreeId].tsx'
 /** The one switch with no native screen behind it; its route file only re-exports this body. */
 const CATCH_ALL_ROUTE = 'src/mobile-web-shell/catch-all-page-route.tsx'
+/** What a switch paints while the decision is `pending`, and the third thing every switch names. */
+const PENDING_SCREEN = 'src/mobile-web-shell/ShellSwitchPendingScreen.tsx'
 /** One entry per screen the flag can switch to the page, which is what a review reads. */
 const SWITCHED_ROUTES = [
   HOST_ROUTE,
@@ -64,12 +66,35 @@ function filesContaining(needle: string): string[] {
     .sort()
 }
 
+/**
+ * The same matches with the line each was read off, as the failure message for the rules below.
+ *
+ * A census that answers only with paths tells a reader which file is wrong and nothing about what
+ * in it is: the needles here are identifiers, and a file can name one in an import, a call or a
+ * comment. The snippet is what turns "this list moved" into the edit that moved it.
+ */
+function matchesOf(needle: string): string {
+  // Sorted by path then by line number, not as text: `:59:` sorts before `:4:` as a string, which
+  // reads as a file whose matches are out of order.
+  return [...SOURCES]
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .flatMap((file) =>
+      file.text
+        .split('\n')
+        .flatMap((line, index) =>
+          line.includes(needle) ? [`${file.path}:${index + 1}: ${line.trim()}`] : []
+        )
+    )
+    .join('\n')
+}
+
 describe('who touches the hybrid shell flag', () => {
   it('reaches every shipped tree, so the absence assertions below cannot pass vacuously', () => {
     const paths = SOURCES.map((file) => file.path)
     expect(paths).toContain(DEFINITION)
     expect(paths).toContain(FLAG_HOOK)
     expect(paths).toContain(DECISION)
+    expect(paths).toContain(PENDING_SCREEN)
     expect(paths).toContain(ROUTE)
     for (const route of SWITCHED_ROUTES) {
       expect(paths).toContain(route)
@@ -97,7 +122,10 @@ describe('who touches the hybrid shell flag', () => {
     // The narrowest this has ever been, and the reason the rule below is total: a route cannot
     // hold a private opinion about the flag — including about the window where it is still `null`
     // — without reading it, and this is the only place that reads it.
-    expect(filesContaining('useMobileWebShellEnabled')).toEqual([DECISION, FLAG_HOOK].sort())
+    expect(
+      filesContaining('useMobileWebShellEnabled'),
+      matchesOf('useMobileWebShellEnabled')
+    ).toEqual([DECISION, FLAG_HOOK].sort())
   })
 
   it('reaches the switched routes through that decision and no others', () => {
@@ -106,9 +134,22 @@ describe('who touches the hybrid shell flag', () => {
     // that switches the route file to MobileWebShellScreen, and never as a side effect of anything
     // else. A switched route is inert until MOBILE_WEB_PAGE_ROUTES lists it as well, so an entry
     // here can land a PR ahead of that one.
-    expect(filesContaining('useShellSwitchDecision')).toEqual(
+    expect(filesContaining('useShellSwitchDecision'), matchesOf('useShellSwitchDecision')).toEqual(
       [DECISION, ROUTE, ...SWITCHED_ROUTES].sort()
     )
+  })
+
+  it('gives every one of them the same neutral state to paint while the flag is unresolved', () => {
+    // The rule a sixth switch would otherwise regress past. Reading the flag through the decision
+    // is not on its own enough: a switch that ignored `pending` and fell through to its native
+    // screen would satisfy the rule above and still flash native in front of a flag-on user. This
+    // one says every switch names the neutral screen, which is existence rather than shape — where
+    // it names it is the route test's business, and `shell-switch-null-flag.test.tsx` drives all
+    // nine through the states themselves.
+    expect(
+      filesContaining('ShellSwitchPendingScreen'),
+      matchesOf('ShellSwitchPendingScreen')
+    ).toEqual([PENDING_SCREEN, ROUTE, ...SWITCHED_ROUTES].sort())
   })
 
   it('is written only by the developer row', () => {
