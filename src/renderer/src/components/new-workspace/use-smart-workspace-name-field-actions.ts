@@ -35,13 +35,17 @@ export function useSmartWorkspaceNameFieldActions(
   foundation: Foundation,
   presentation: Presentation
 ) {
+  const { selectJiraAccount, jiraBoundSourceContext, activeEmojiShortcode } = presentation
   const {
     jiraConnectionStatus,
     jiraSourceContext,
+    businessmapConnectionStatus,
+    businessmapSourceContext,
     onBranchSelect,
     onGitHubItemSelect,
     onGitLabItemSelect,
     onJiraIssueSelect,
+    onBusinessmapCardSelect,
     onLinearIssueSelect,
     onValueChange,
     setOpen,
@@ -62,7 +66,6 @@ export function useSmartWorkspaceNameFieldActions(
     addRepo,
     repoSlugCacheRef
   } = foundation
-  const { selectJiraAccount, jiraBoundSourceContext, activeEmojiShortcode } = presentation
 
   const handleSelect = useCallback(
     (row: RowEntry) => {
@@ -99,6 +102,18 @@ export function useSmartWorkspaceNameFieldActions(
           return
         }
         onJiraIssueSelect?.(row.issue, sourceContext)
+      } else if (row.kind === 'businessmap') {
+        const sourceContext = businessmapSourceContext
+        if (!sourceContext || !businessmapConnectionStatus?.connected) {
+          toast.error(
+            translate(
+              'auto.components.new.workspace.SmartWorkspaceNameField.businessmapSelectBindFailed',
+              'Couldn’t link this Businessmap card. Reconnect Businessmap, then try again.'
+            )
+          )
+          return
+        }
+        onBusinessmapCardSelect?.(row.card, sourceContext)
       } else {
         onLinearIssueSelect(row.issue)
       }
@@ -108,10 +123,13 @@ export function useSmartWorkspaceNameFieldActions(
       jiraBoundSourceContext,
       jiraConnectionStatus?.sites,
       jiraSourceContext,
+      businessmapConnectionStatus?.connected,
+      businessmapSourceContext,
       onBranchSelect,
       onGitHubItemSelect,
       onGitLabItemSelect,
       onJiraIssueSelect,
+      onBusinessmapCardSelect,
       onLinearIssueSelect,
       onValueChange,
       setOpen,
