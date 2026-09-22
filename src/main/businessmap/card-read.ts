@@ -247,7 +247,8 @@ function readAllPages(payload: unknown): number | null {
 export async function fetchCardPages(
   entry: BusinessmapClientForSite,
   base: URLSearchParams,
-  boardId: number | null
+  boardId: number | null,
+  maxRows: number | null = null
 ): Promise<unknown[]> {
   const raws: unknown[] = []
   let page = 1
@@ -266,7 +267,10 @@ export async function fetchCardPages(
     }
     const items = unwrapList(payload)
     raws.push(...items)
-    // Walk every page (up to the guard); no early stop on raws.length.
+    // List stops at its row budget; search (maxRows null) walks every page.
+    if (maxRows !== null && raws.length >= maxRows) {
+      break
+    }
     const paging = readAllPages(payload)
     if (paging === null || page >= paging || items.length === 0) {
       break
