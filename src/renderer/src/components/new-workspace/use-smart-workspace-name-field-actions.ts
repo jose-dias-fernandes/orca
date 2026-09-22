@@ -9,7 +9,7 @@ import {
   type WorkspaceEmojiSuggestion
 } from '@/lib/workspace-emoji-shortcodes'
 import type { GitHubWorkItem } from '../../../../shared/github/work-item-types'
-import { buildTaskSourceContextFromRepo } from '../../../../shared/task-source-context'
+import { buildTaskSourceContextFromRepo, normalizeTaskSourceContext } from '../../../../shared/task-source-context'
 import { bindJiraIssueSourceContext } from './use-jira-url-source'
 import type { RepoOption, RowEntry } from './smart-workspace-name-field-model'
 import { getRepoSlugCached, sameSlug } from './smart-workspace-repo-slug'
@@ -103,7 +103,20 @@ export function useSmartWorkspaceNameFieldActions(
         }
         onJiraIssueSelect?.(row.issue, sourceContext)
       } else if (row.kind === 'businessmap') {
-        const sourceContext = businessmapSourceContext
+        const sourceContext =
+          businessmapSourceContext?.provider === 'businessmap'
+            ? normalizeTaskSourceContext({
+                ...businessmapSourceContext,
+                providerIdentity: {
+                  provider: 'businessmap',
+                  subdomain:
+                    businessmapSourceContext.providerIdentity?.provider === 'businessmap'
+                      ? (businessmapSourceContext.providerIdentity.subdomain ?? null)
+                      : null,
+                  boardId: row.card.boardId
+                }
+              })
+            : null
         if (!sourceContext || !businessmapConnectionStatus?.connected) {
           toast.error(
             translate(

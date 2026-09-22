@@ -19,30 +19,32 @@ import { createBusinessmapSlice } from './businessmap'
 
 const businessmapStatus = vi.fn()
 const businessmapConnect = vi.fn()
+const businessmapCreateCard = vi.fn()
 const businessmapDisconnect = vi.fn()
 const businessmapGetCard = vi.fn()
+const businessmapListBoards = vi.fn()
 const businessmapListCards = vi.fn()
 const businessmapReadStatus = vi.fn()
 const businessmapSearchCards = vi.fn()
 const businessmapSelectSite = vi.fn()
 const businessmapTestConnection = vi.fn()
-
+const businessmapUpdateCard = vi.fn()
 vi.mock('@/runtime/runtime-businessmap-client', () => ({
   businessmapAddCardComment: vi.fn(),
   businessmapConnect: (...args: unknown[]) => businessmapConnect(...args),
-  businessmapCreateCard: vi.fn(),
+  businessmapCreateCard: (...args: unknown[]) => businessmapCreateCard(...args),
   businessmapDisconnect: (...args: unknown[]) => businessmapDisconnect(...args),
   businessmapGetBoardTree: vi.fn(),
   businessmapGetCard: (...args: unknown[]) => businessmapGetCard(...args),
   businessmapIssueComments: vi.fn(),
-  businessmapListBoards: vi.fn(),
+  businessmapListBoards: (...args: unknown[]) => businessmapListBoards(...args),
   businessmapListCards: (...args: unknown[]) => businessmapListCards(...args),
   businessmapReadStatus: (...args: unknown[]) => businessmapReadStatus(...args),
   businessmapSearchCards: (...args: unknown[]) => businessmapSearchCards(...args),
   businessmapSelectSite: (...args: unknown[]) => businessmapSelectSite(...args),
   businessmapStatus: (...args: unknown[]) => businessmapStatus(...args),
   businessmapTestConnection: (...args: unknown[]) => businessmapTestConnection(...args),
-  businessmapUpdateCard: vi.fn()
+  businessmapUpdateCard: (...args: unknown[]) => businessmapUpdateCard(...args)
 }))
 
 function createTestStore() {
@@ -215,7 +217,7 @@ describe('createBusinessmapSlice runtime context', () => {
 
     sourceResult.resolve([{ ...card(1), title: 'Source card' }])
     await expect(request).resolves.toMatchObject([{ id: 1, title: 'Source card' }])
-    expect(businessmapListCards).toHaveBeenCalledWith(sourceContext, 'assigned', 30, 'site-1', null)
+    expect(businessmapListCards).toHaveBeenCalledWith(sourceContext, 'assigned', 30, null, null)
     expect(Object.values(store.getState().businessmapSearchCache)).toHaveLength(1)
     expect(
       store.getState().businessmapSearchCache['site-1::all::list::assigned::30']
@@ -364,5 +366,115 @@ describe('createBusinessmapSlice credential errors', () => {
     await expect(store.getState().listBusinessmapCards('assigned', 30)).rejects.toThrow('Forbidden')
 
     expect(store.getState().businessmapStatus.connected).toBe(true)
+  })
+
+  it('re-throws non-auth card-read failures instead of returning null', async () => {
+    const store = createTestStore()
+    businessmapGetCard.mockRejectedValueOnce(new Error('timeout'))
+    await expect(store.getState().fetchBusinessmapCard(42)).rejects.toThrow('timeout')
+    businessmapGetCard.mockRejectedValueOnce(new Error('Error 401: Unauthorized'))
+    await expect(store.getState().fetchBusinessmapCard(43)).resolves.toBeNull()
+  })
+})
+
+describe('createBusinessmapSlice bot findings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  // Why: pre-mutation reads resolving after the cache clear must not repopulate stale cards.
+  it('drops pre-mutation list writes that resolve after a successful card update', async () => {
+    const store = createTestStore()
+    store.setState({
+      businessmapStatus: { connected: true, viewer: null, selectedSiteId: 'site-1' }
+    })
+    const staleList = deferred<BusinessmapCard[]>()
+    businessmapListCards.mockReturnValueOnce(staleList.promise)
+    businessmapUpdateCard.mockResolvedValueOnce({ ok: true })
+    const listRequest = store.getState().listBusinessmapCards('assigned', 30)
+    await store.getState().updateBusinessmapCard(1, { title: 'New' })
+    staleList.resolve([card(1)])
+    await expect(listRequest).resolves.toMatchObject([{ id: 1 }])
+    expect(store.getState().businessmapSearchCache).toEqual({})
+  })
+
+  // Why: finally on a separate promise leaves an unowned rejection when boards fail.
+  it('owns the boards cleanup rejection on the returned promise', async () => {
+    const store = createTestStore()
+    businessmapListBoards.mockRejectedValueOnce(new Error('boards down'))
+    await expect(store.getState().listBusinessmapBoards()).rejects.toThrow('boards down')
+  })
+
+  // Why: two abortable searches on one key must keep the newest result, not the last to land.
+  it('keeps the newest abortable search result when an older request lands last', async () => {
+    const store = createTestStore()
+    const first = deferred<BusinessmapCard[]>()
+    const second = deferred<BusinessmapCard[]>()
+    businessmapSearchCards.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const firstController = new AbortController()
+    const secondController = new AbortController()
+    const firstRequest = store
+      .getState()
+      .searchBusinessmapCards('doing', 30, { signal: firstController.signal })
+    const secondRequest = store
+      .getState()
+      .searchBusinessmapCards('doing', 30, { signal: secondController.signal })
+    second.resolve([{ ...card(2), title: 'Newer' }])
+    await secondRequest
+    first.resolve([{ ...card(1), title: 'Older' }])
+    await firstRequest
+    expect(
+      store.getState().businessmapSearchCache['default::all::doing::30']?.data?.[0]?.title
+    ).toBe('Newer')
+  })
+
+  // Why: an explicit source runtime must never read the focused site selection.
+  it('resolves no site for explicit source reads without a siteId', async () => {
+    const store = createTestStore()
+    store.setState({
+      businessmapStatus: { connected: true, viewer: null, selectedSiteId: 'site-1' }
+    })
+    const source = businessmapSourceContext('remote-runtime')
+    businessmapSearchCards.mockResolvedValueOnce([])
+    await store.getState().searchBusinessmapCards('doing', 12, { sourceContext: source })
+    expect(businessmapSearchCards).toHaveBeenCalledWith(
+      source,
+      'doing',
+      12,
+      null,
+      null,
+      undefined
+    )
+  })
+
+  // Why: viewer subdomain and same-length site changes must still publish a revision.
+  it('publishes a revision when only the viewer subdomain changes', async () => {
+    const store = createTestStore()
+    store.setState({
+      businessmapStatus: status('old'),
+      businessmapStatusChecked: true,
+      businessmapStatusContextKey: 'local#0'
+    })
+    businessmapStatus.mockResolvedValueOnce(status('new'))
+    await store.getState().checkBusinessmapConnection()
+    expect(store.getState().businessmapConnectionRevisions['local#0']).toBe(1)
+    expect(store.getState().businessmapStatus.viewer?.subdomain).toBe('new')
+  })
+
+  // Why: disconnect must clear caches even when the follow-up status read fails.
+  it('clears caches and marks unchecked when the post-disconnect status read fails', async () => {
+    const store = createTestStore()
+    store.setState({
+      businessmapStatus: status('acme'),
+      businessmapSearchCache: {
+        'site-1::all::list::assigned::30': { data: [card(1)], fetchedAt: Date.now() }
+      }
+    })
+    businessmapDisconnect.mockResolvedValueOnce(undefined)
+    businessmapStatus.mockRejectedValueOnce(new Error('status down'))
+    await store.getState().disconnectBusinessmap()
+    expect(store.getState().businessmapSearchCache).toEqual({})
+    expect(store.getState().businessmapStatus.connected).toBe(false)
+    expect(store.getState().businessmapStatusChecked).toBe(true)
   })
 })

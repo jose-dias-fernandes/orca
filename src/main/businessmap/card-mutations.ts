@@ -16,7 +16,7 @@ import {
   unwrapList,
   unwrapSingle
 } from './authenticated-request'
-import type { BusinessmapClientForSite } from './authenticated-request'
+import type { ApiRecord, BusinessmapClientForSite } from './authenticated-request'
 import { asId, cardUrl, getClientEntries, mapComment } from './card-read'
 import { clearToken } from './client'
 
@@ -67,19 +67,20 @@ export async function createCard(
   if (!title) {
     return { ok: false, error: 'Title is required.' }
   }
+  // Placement first: getBoardTree takes its own queue slot, so holding one here would deadlock.
+  const placement = await resolveColumnLane(
+    args.boardId,
+    entry.site.id,
+    args.columnId,
+    args.laneId
+  )
+  if (!placement.ok) {
+    return placement
+  }
   await acquire()
   try {
-    const placement = await resolveColumnLane(
-      args.boardId,
-      entry.site.id,
-      args.columnId,
-      args.laneId
-    )
-    if (!placement.ok) {
-      return placement
-    }
+    // Board is implicit in the target column; POST /cards takes no board_id.
     const body: Record<string, unknown> = {
-      board_id: args.boardId,
       title,
       column_id: placement.columnId
     }
@@ -118,6 +119,42 @@ export async function updateCard(
   if (!entry) {
     return { ok: false, error: 'Not connected to Businessmap.' }
   }
+  // Resolve the move target before taking a slot; the lookups below take their own slots.
+  let move: { columnId: number; laneId: number | null; reason?: string } | null = null
+  if (updates.columnId !== undefined || updates.laneId !== undefined) {
+    await acquire()
+    let current: ApiRecord
+    try {
+      current = unwrapSingle(
+        await businessmapRead(entry, `/cards/${id}?fields=card_id,board_id,column_id,lane_id`)
+      )
+    } catch (error) {
+      release()
+      if (isAuthError(error)) {
+        clearToken(entry.site.id)
+        throw error
+      }
+      return { ok: false, error: error instanceof Error ? error.message : 'Failed to update card.' }
+    }
+    release()
+    const boardId = asId(current.board_id)
+    if (boardId === null) {
+      return { ok: false, error: 'Card board is unknown; cannot move.' }
+    }
+    const placement = await resolveColumnLane(
+      boardId,
+      entry.site.id,
+      updates.columnId,
+      updates.laneId
+    )
+    if (!placement.ok) {
+      return placement
+    }
+    move = { columnId: placement.columnId, laneId: placement.laneId }
+    if (updates.reason?.trim()) {
+      move.reason = updates.reason.trim()
+    }
+  }
   await acquire()
   try {
     const body: Record<string, unknown> = {}
@@ -127,29 +164,14 @@ export async function updateCard(
     if (updates.description !== undefined) {
       body.description = updates.description
     }
-    if (updates.columnId !== undefined || updates.laneId !== undefined) {
-      const current = unwrapSingle(
-        await businessmapRead(entry, `/cards/${id}?fields=card_id,board_id,column_id,lane_id`)
-      )
-      const boardId = asId(asRecord(current).board_id)
-      if (boardId === null) {
-        return { ok: false, error: 'Card board is unknown; cannot move.' }
+    if (move !== null) {
+      body.column_id = move.columnId
+      if (move.laneId !== null) {
+        body.lane_id = move.laneId
       }
-      const placement = await resolveColumnLane(
-        boardId,
-        entry.site.id,
-        updates.columnId,
-        updates.laneId
-      )
-      if (!placement.ok) {
-        return placement
-      }
-      body.column_id = placement.columnId
-      if (placement.laneId !== null) {
-        body.lane_id = placement.laneId
-      }
-      if (updates.reason?.trim()) {
-        body.move_reason = updates.reason.trim()
+      if (move.reason !== undefined) {
+        // PATCH /cards moves with exceeding_reason, not move_reason.
+        body.exceeding_reason = move.reason
       }
     }
     await businessmapRequest(entry, `/cards/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
@@ -227,7 +249,7 @@ export async function getCardComments(
 
 // Single GET /users for assignee pickers; one call, never one lookup per card.
 export async function listAssignableUsers(
-  boardId: number,
+  _boardId: number,
   siteId?: string | null
 ): Promise<{ id: number; displayName: string }[]> {
   const entry = firstEntry(siteId)
@@ -236,8 +258,8 @@ export async function listAssignableUsers(
   }
   await acquire()
   try {
+    // GET /users takes no board filter; fetch the directory once for pickers.
     const params = new URLSearchParams({
-      board_ids: String(boardId),
       fields: 'user_id,realname,email'
     })
     const payload = await businessmapRead(entry, `/users?${params.toString()}`)

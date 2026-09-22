@@ -19,6 +19,7 @@ export type InflightBusinessmapReadRequest<T> = {
   promise: Promise<T>
   contextKey: string
   mutationGeneration: number
+  readInvalidationGeneration: number
 }
 
 export type BusinessmapReadScope = {
@@ -44,9 +45,12 @@ export const inflightBusinessmapBoardRequests = new Map<
   string,
   InflightBusinessmapReadRequest<unknown>
 >()
+// Why: abortable searches skip inflight dedupe, so a per-key sequence fences out-of-order writes.
+const businessmapSearchRequestSequences = new Map<string, number>()
 
 let businessmapStatusReadGeneration = 0
 let businessmapMutationGeneration = 0
+let businessmapReadInvalidationGeneration = 0
 
 export const EMPTY_BUSINESSMAP_READ_CACHES = {
   businessmapCardCache: {},
@@ -96,15 +100,32 @@ export function clearBusinessmapInflightRequests(): void {
   inflightBusinessmapSearchRequests.clear()
   inflightBusinessmapListRequests.clear()
   inflightBusinessmapBoardRequests.clear()
+  businessmapSearchRequestSequences.clear()
 }
-
 export function beginBusinessmapMutation(): number {
   businessmapMutationGeneration += 1
   return businessmapMutationGeneration
 }
-
-export function currentBusinessmapMutationGeneration(): number {
+// Why: status probes observe the generation without invalidating in-flight connection work.
+export function peekBusinessmapMutationGeneration(): number {
   return businessmapMutationGeneration
+}
+// Why: reads started before a card write must not repopulate cleared caches.
+export function invalidateBusinessmapReads(): number {
+  businessmapReadInvalidationGeneration += 1
+  return businessmapReadInvalidationGeneration
+}
+export function currentBusinessmapReadInvalidationGeneration(): number {
+  return businessmapReadInvalidationGeneration
+}
+// Why: abortable searches share a cache key without inflight dedupe; last write wins.
+export function nextBusinessmapSearchRequestSequence(cacheKey: string): number {
+  const next = (businessmapSearchRequestSequences.get(cacheKey) ?? 0) + 1
+  businessmapSearchRequestSequences.set(cacheKey, next)
+  return next
+}
+export function currentBusinessmapSearchRequestSequence(cacheKey: string): number {
+  return businessmapSearchRequestSequences.get(cacheKey) ?? 0
 }
 
 export function nextBusinessmapStatusReadGeneration(): number {
@@ -131,10 +152,13 @@ export function canWriteBusinessmapReadResult(
   contextKey: string,
   mutationGeneration: number,
   settings: AppState['settings'],
-  explicitSource = false
+  explicitSource = false,
+  readInvalidationGeneration?: number
 ): boolean {
   return (
     mutationGeneration === businessmapMutationGeneration &&
+    (readInvalidationGeneration === undefined ||
+      readInvalidationGeneration === businessmapReadInvalidationGeneration) &&
     (explicitSource || isCurrentBusinessmapRuntimeContext(contextKey, settings))
   )
 }

@@ -105,14 +105,15 @@ export function useComposerSourceContextState(input: ComposerSourceContextStateI
 
   const initialLinkedWorkItemSeed =
     normalizedInitialLinkedWorkItem &&
-    getLinkedWorkItemProvider(normalizedInitialLinkedWorkItem) === 'jira' &&
+    (getLinkedWorkItemProvider(normalizedInitialLinkedWorkItem) === 'jira' ||
+      getLinkedWorkItemProvider(normalizedInitialLinkedWorkItem) === 'businessmap') &&
     !initialLinkedTaskSourceContext
       ? null
       : normalizedInitialLinkedWorkItem
-
   const draftLinkedWorkItemSeed =
     normalizedDraftLinkedWorkItem &&
-    getLinkedWorkItemProvider(normalizedDraftLinkedWorkItem) === 'jira' &&
+    (getLinkedWorkItemProvider(normalizedDraftLinkedWorkItem) === 'jira' ||
+      getLinkedWorkItemProvider(normalizedDraftLinkedWorkItem) === 'businessmap') &&
     !draftLinkedTaskSourceContext
       ? null
       : normalizedDraftLinkedWorkItem

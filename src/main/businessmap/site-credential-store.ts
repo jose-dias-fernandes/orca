@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { getSecretStore } from '../../shared/secret-store'
 import {
   CredentialDecryptionError,
   credentialFileHasContent,
@@ -148,13 +147,12 @@ export function writeSiteFile(file: BusinessmapSiteFile): void {
       : activeSiteId
   cachedSiteFile = { version: 1, activeSiteId, selectedSiteId, sites }
   siteFileLoaded = true
-  writeEncryptedCredential(
-    'Businessmap',
-    getSiteFilePath(),
-    JSON.stringify(cachedSiteFile, null, 2)
-  )
+  // Site list holds no secrets: plaintext JSON so a reinstalled keychain still resolves sites.
+  writeFileSync(getSiteFilePath(), JSON.stringify(cachedSiteFile, null, 2), {
+    encoding: 'utf-8',
+    mode: 0o600
+  })
 }
-
 export function readToken(siteId: string): string | null {
   const cached = cachedTokens.get(siteId)
   if (cached !== undefined) {
@@ -183,13 +181,8 @@ export function readToken(siteId: string): string | null {
 export function saveToken(siteId: string, apiKey: string): void {
   ensureOrcaDir()
   ensureTokenDir()
-  if (getSecretStore().isEncryptionAvailable()) {
-    writeEncryptedCredential('Businessmap', getTokenPath(siteId), apiKey)
-  } else {
-    // No keyring: mirror Jira's plaintext fallback so a keyring-less box still connects.
-    console.warn('[businessmap] secret encryption unavailable — storing token in plaintext')
-    writeFileSync(getTokenPath(siteId), apiKey, { encoding: 'utf-8', mode: 0o600 })
-  }
+  // Per-site API keys stay encrypted; only the site list above is plaintext.
+  writeEncryptedCredential('Businessmap', getTokenPath(siteId), apiKey)
   cachedTokens.set(siteId, apiKey)
   credentialErrors.delete(siteId)
 }

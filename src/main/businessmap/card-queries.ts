@@ -20,11 +20,10 @@ import { clearToken } from './client'
 async function listCardsForEntry(
   entry: BusinessmapClientForSite,
   filter: BusinessmapCardFilter,
-  limit: number,
   boardId: number | null
 ): Promise<BusinessmapCard[]> {
   const viewerId = filter === 'assigned' ? await currentUserId(entry) : null
-  const raws = await fetchCardPages(entry, filterParams(filter, viewerId), limit, boardId)
+  const raws = await fetchCardPages(entry, filterParams(filter, viewerId), boardId)
   const names = await loadNameTables(entry, raws, boardId)
   return raws
     .map((raw) => mapCard(entry.site, raw, names, boardId))
@@ -46,7 +45,7 @@ export async function listCards(
   const results = await Promise.all(
     entries.map(async (entry) => {
       try {
-        return await listCardsForEntry(entry, filter, safeLimit, board)
+        return await listCardsForEntry(entry, filter, board)
       } catch (error) {
         return surfaceReadError(error, entry, entries.length)
       }
@@ -88,7 +87,7 @@ export async function searchCards(
         } else {
           params.set('search', trimmed)
         }
-        const raws = await fetchCardPages(entry, params, safeLimit, board)
+        const raws = await fetchCardPages(entry, params, board)
         const names = await loadNameTables(entry, raws, board)
         const cards = raws
           .map((raw) => mapCard(entry.site, raw, names, board))

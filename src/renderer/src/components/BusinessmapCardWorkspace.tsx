@@ -10,9 +10,9 @@ import { useAppStore } from '@/store'
 import {
   businessmapAddCardComment,
   businessmapGetCard,
-  businessmapIssueComments,
-  businessmapUpdateCard
+  businessmapIssueComments
 } from '@/runtime/runtime-businessmap-client'
+import { useBusinessmapCardMutations } from './use-businessmap-card-mutations'
 import type { BusinessmapCard, BusinessmapComment } from '../../../shared/businessmap-types'
 import type { TaskSourceContext } from '../../../shared/task-source-context'
 import { translate } from '@/i18n/i18n'
@@ -57,11 +57,15 @@ export default function BusinessmapCardWorkspace({
       setComments([])
       setCommentsError(null)
       setCommentDraft('')
+      setPendingField(null)
+      setCommentSubmitting(false)
       return
     }
     requestIdRef.current += 1
     const requestId = requestIdRef.current
     setFullCard(card)
+    setPendingField(null)
+    setCommentSubmitting(false)
     setTitleDraft(card.title)
     setDescriptionDraft(card.description ?? '')
     setComments([])
@@ -103,67 +107,16 @@ export default function BusinessmapCardWorkspace({
       })
   }, [card, providerSettings])
 
-  const handleSaveTitle = useCallback(() => {
-    if (!displayed || pendingField) {
-      return
-    }
-    const title = titleDraft.trim()
-    if (!title || title === displayed.title) {
-      setTitleDraft(displayed.title)
-      return
-    }
-    setPendingField('title')
-    setFullCard({ ...displayed, title })
-    void businessmapUpdateCard(providerSettings, displayed.id, { title })
-      .then((result) => {
-        if (!result.ok) {
-          throw new Error(result.error)
-        }
-      })
-      .catch((error) => {
-        setFullCard(displayed)
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : translate(
-                'auto.components.BusinessmapCardWorkspace.updateFailed',
-                'Failed to update card.'
-              )
-        )
-      })
-      .finally(() => setPendingField(null))
-  }, [displayed, pendingField, providerSettings, titleDraft])
-
-  const handleSaveDescription = useCallback(() => {
-    if (!displayed || pendingField) {
-      return
-    }
-    const description = descriptionDraft.trim()
-    if ((displayed.description ?? '') === description) {
-      return
-    }
-    setPendingField('description')
-    setFullCard({ ...displayed, description })
-    void businessmapUpdateCard(providerSettings, displayed.id, { description })
-      .then((result) => {
-        if (!result.ok) {
-          throw new Error(result.error)
-        }
-      })
-      .catch((error) => {
-        setFullCard(displayed)
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : translate(
-                'auto.components.BusinessmapCardWorkspace.updateFailed',
-                'Failed to update card.'
-              )
-        )
-      })
-      .finally(() => setPendingField(null))
-  }, [descriptionDraft, displayed, pendingField, providerSettings])
-
+  const { handleSaveTitle, handleSaveDescription } = useBusinessmapCardMutations({
+    displayed,
+    pendingField,
+    providerSettings,
+    titleDraft,
+    descriptionDraft,
+    requestIdRef,
+    setFullCard,
+    setPendingField
+  })
   const handleSubmitComment = useCallback(async (): Promise<void> => {
     if (!displayed || commentSubmitting) {
       return
@@ -182,10 +135,14 @@ export default function BusinessmapCardWorkspace({
       return
     }
     setCommentSubmitting(true)
+    const requestId = requestIdRef.current
     try {
       const result = await businessmapAddCardComment(providerSettings, displayed.id, bodyState.body)
       if (!result.ok) {
         throw new Error(result.error)
+      }
+      if (requestId !== requestIdRef.current) {
+        return
       }
       const comment: BusinessmapComment = {
         id: result.id,
@@ -196,13 +153,18 @@ export default function BusinessmapCardWorkspace({
       setComments((prev) => [...prev, comment])
       setCommentDraft('')
     } catch (error) {
+      if (requestId !== requestIdRef.current) {
+        return
+      }
       toast.error(
         error instanceof Error
           ? error.message
           : translate('auto.components.JiraIssueWorkspace.fa132c8aed', 'Failed to add comment.')
       )
     } finally {
-      setCommentSubmitting(false)
+      if (requestId === requestIdRef.current) {
+        setCommentSubmitting(false)
+      }
     }
   }, [commentDraft, commentSubmitting, displayed, providerSettings])
   const canSubmitComment = hasBoundedCommentBodyText(commentDraft)

@@ -20,6 +20,7 @@ export type BusinessmapConnectionStatus = {
   activeSiteId?: string | null
   selectedSiteId?: string | null
   // Set when a stored API key was rejected but the site stays saved.
+  credentialError?: string
 }
 
 export type BusinessmapBoard = {

@@ -16,11 +16,13 @@ import type {
   BusinessmapSliceSet
 } from './businessmap-slice-contract'
 import {
-  currentBusinessmapMutationGeneration,
+  peekBusinessmapMutationGeneration,
+  currentBusinessmapReadInvalidationGeneration,
   evictStaleBusinessmapCacheEntries,
   getBusinessmapReadScope,
   inflightBusinessmapBoardRequests,
   inflightBusinessmapListRequests,
+  invalidateBusinessmapReads,
   isFreshBusinessmapCacheEntry,
   scopedBusinessmapCacheKey,
   type InflightBusinessmapReadRequest
@@ -67,20 +69,22 @@ export function createBusinessmapCollectionReadActions(
         return cached.data ?? []
       }
       const inflight = inflightBusinessmapListRequests.get(cacheKey)
-      const requestMutationGeneration = currentBusinessmapMutationGeneration()
+      const requestMutationGeneration = peekBusinessmapMutationGeneration()
+      const requestReadInvalidation = currentBusinessmapReadInvalidationGeneration()
       if (
         inflight &&
         inflight.contextKey === scope.contextKey &&
-        inflight.mutationGeneration === requestMutationGeneration
+        inflight.mutationGeneration === requestMutationGeneration &&
+        inflight.readInvalidationGeneration === requestReadInvalidation
       ) {
         return inflight.promise
       }
       let entry: InflightBusinessmapReadRequest<BusinessmapCard[]>
-      const promise = businessmapListCards(scope.settings, filter, limit, siteId, boardId)
+      const request = businessmapListCards(scope.settings, filter, limit, siteId, boardId)
         .then((cards) => {
           if (
             inflightBusinessmapListRequests.get(cacheKey) === entry &&
-            canWriteCollectionResult(scope, requestMutationGeneration, get)
+            canWriteCollectionResult(scope, requestMutationGeneration, get, requestReadInvalidation)
           ) {
             set((state) => ({
               businessmapSearchCache: evictStaleBusinessmapCacheEntries({
@@ -98,18 +102,20 @@ export function createBusinessmapCollectionReadActions(
             scope,
             requestMutationGeneration,
             set,
-            get
+            get,
+            requestReadInvalidation
           )
         })
-        .finally(() => {
-          if (inflightBusinessmapListRequests.get(cacheKey) === entry) {
-            inflightBusinessmapListRequests.delete(cacheKey)
-          }
-        })
+      const promise = request.finally(() => {
+        if (inflightBusinessmapListRequests.get(cacheKey) === entry) {
+          inflightBusinessmapListRequests.delete(cacheKey)
+        }
+      })
       entry = {
         promise,
         contextKey: scope.contextKey,
-        mutationGeneration: requestMutationGeneration
+        mutationGeneration: requestMutationGeneration,
+        readInvalidationGeneration: requestReadInvalidation
       }
       inflightBusinessmapListRequests.set(cacheKey, entry)
       return promise
@@ -120,6 +126,7 @@ export function createBusinessmapCollectionReadActions(
       const siteId = resolveReadSiteId(options, get)
       const result = await businessmapCreateCard(scope.settings, args, siteId)
       if (result.ok) {
+        invalidateBusinessmapReads()
         set((state) => ({ ...state, businessmapSearchCache: {} }))
       }
       return result
@@ -129,6 +136,7 @@ export function createBusinessmapCollectionReadActions(
       const siteId = resolveReadSiteId(options, get)
       const result = await businessmapUpdateCard(scope.settings, id, updates, siteId)
       if (result.ok) {
+        invalidateBusinessmapReads()
         set(() => ({ businessmapSearchCache: {}, businessmapCardCache: {} }))
       }
       return result
@@ -149,40 +157,54 @@ export function createBusinessmapCollectionReadActions(
         return cached.data ?? []
       }
       const inflight = inflightBusinessmapBoardRequests.get(cacheKey)
-      const requestMutationGeneration = currentBusinessmapMutationGeneration()
+      const requestMutationGeneration = peekBusinessmapMutationGeneration()
+      const requestReadInvalidation = currentBusinessmapReadInvalidationGeneration()
       if (
         inflight &&
         inflight.contextKey === scope.contextKey &&
-        inflight.mutationGeneration === requestMutationGeneration
+        inflight.mutationGeneration === requestMutationGeneration &&
+        inflight.readInvalidationGeneration === requestReadInvalidation
       ) {
         // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: inflight map is typed unknown to share one registry across board/card payloads; the entry stored below always carries BusinessmapBoard[].
         return inflight.promise.then((boards) => boards as BusinessmapBoard[])
       }
-      const promise = businessmapListBoards(scope.settings, siteId).then((boards) => {
-        if (
-          inflightBusinessmapBoardRequests.get(cacheKey) === entry &&
-          canWriteCollectionResult(scope, requestMutationGeneration, get)
-        ) {
-          set((state) => ({
-            businessmapBoardCache: evictStaleBusinessmapCacheEntries({
-              ...state.businessmapBoardCache,
-              [cacheKey]: { data: boards, fetchedAt: Date.now() }
-            })
-          }))
-        }
-        return boards
-      })
-      const entry: InflightBusinessmapReadRequest<unknown> = {
-        promise,
-        contextKey: scope.contextKey,
-        mutationGeneration: requestMutationGeneration
-      }
-      inflightBusinessmapBoardRequests.set(cacheKey, entry)
-      void promise.finally(() => {
+      let entry: InflightBusinessmapReadRequest<unknown>
+      const request = businessmapListBoards(scope.settings, siteId)
+        .then((boards) => {
+          if (
+            inflightBusinessmapBoardRequests.get(cacheKey) === entry &&
+            canWriteCollectionResult(
+              scope,
+              requestMutationGeneration,
+              get,
+              requestReadInvalidation
+            )
+          ) {
+            set((state) => ({
+              businessmapBoardCache: evictStaleBusinessmapCacheEntries({
+                ...state.businessmapBoardCache,
+                [cacheKey]: { data: boards, fetchedAt: Date.now() }
+              })
+            }))
+          }
+          return boards
+        })
+        .catch((error) => {
+          console.warn('[businessmap] listBusinessmapBoards failed:', error)
+          throw error
+        })
+      const promise = request.finally(() => {
         if (inflightBusinessmapBoardRequests.get(cacheKey) === entry) {
           inflightBusinessmapBoardRequests.delete(cacheKey)
         }
       })
+      entry = {
+        promise,
+        contextKey: scope.contextKey,
+        mutationGeneration: requestMutationGeneration,
+        readInvalidationGeneration: requestReadInvalidation
+      }
+      inflightBusinessmapBoardRequests.set(cacheKey, entry)
       return promise
     }
   }

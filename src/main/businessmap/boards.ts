@@ -94,7 +94,12 @@ function buildBoardTree(boardId: number, structure: Record<string, unknown>): Bu
     columnsById[id] = {
       id,
       name: asString(column.name),
-      workflowId: asNumber(column.workflow_id ?? column.parent_id) ?? workflows[0]?.id ?? 0
+      // Current API names the parent parent_column_id; older payloads use parent_id.
+      workflowId:
+        asNumber(column.workflow_id) ??
+        asNumber(column.parent_column_id ?? column.parent_id) ??
+        workflows[0]?.id ??
+        0
     }
   }
   const lanesById: BusinessmapBoardTree['lanesById'] = {}

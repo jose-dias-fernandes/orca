@@ -12,13 +12,15 @@ import {
 export function canWriteCollectionResult(
   scope: BusinessmapReadScope,
   mutationGeneration: number,
-  get: BusinessmapSliceGet
+  get: BusinessmapSliceGet,
+  readInvalidationGeneration?: number
 ): boolean {
   return canWriteBusinessmapReadResult(
     scope.contextKey,
     mutationGeneration,
     get().settings,
-    scope.explicitSource
+    scope.explicitSource,
+    readInvalidationGeneration
   )
 }
 
@@ -27,16 +29,17 @@ export function handleBusinessmapCollectionReadError(
   scope: BusinessmapReadScope,
   mutationGeneration: number,
   set: BusinessmapSliceSet,
-  get: BusinessmapSliceGet
+  get: BusinessmapSliceGet,
+  readInvalidationGeneration?: number
 ): BusinessmapCard[] {
   if (
     isIntegrationCredentialDecryptionError(error) &&
-    canWriteCollectionResult(scope, mutationGeneration, get)
+    canWriteCollectionResult(scope, mutationGeneration, get, readInvalidationGeneration)
   ) {
     void get().checkBusinessmapConnection()
   } else if (
     looksLikeBusinessmapAuthError(error) &&
-    canWriteCollectionResult(scope, mutationGeneration, get)
+    canWriteCollectionResult(scope, mutationGeneration, get, readInvalidationGeneration)
   ) {
     markBusinessmapConnectionLost(set, scope)
   }
@@ -46,12 +49,16 @@ export function handleBusinessmapCollectionReadError(
   throw error
 }
 
+// Why: an explicit source runtime has no focused-site state; never borrow it.
 export function resolveReadSiteId(
-  options: { siteId?: string | null } | undefined,
+  options: { siteId?: string | null; sourceContext?: unknown } | undefined,
   get: BusinessmapSliceGet
 ): string | null {
   if (options && 'siteId' in options && options.siteId !== undefined) {
     return options.siteId
+  }
+  if (options && 'sourceContext' in options && options.sourceContext != null) {
+    return null
   }
   return getSelectedBusinessmapSiteId(get().businessmapStatus)
 }

@@ -8,8 +8,7 @@ type QueuedBusinessmapRequest = {
 }
 const queue: QueuedBusinessmapRequest[] = []
 
-// Quota headers from the API: X-RateLimit-Remaining-Minute / -Hour.
-let perMinuteRemaining: number | null = null
+// Quota header from the API: X-RateLimit-PerMinute-Remaining.
 let throttledUntil = 0
 
 function createBusinessmapRequestAbortError(): Error {
@@ -20,20 +19,19 @@ function createBusinessmapRequestAbortError(): Error {
 
 // Records quota state from response headers; called on every API response.
 export function recordRateLimit(headers: Headers): void {
-  const minuteValue = headers.get('x-ratelimit-remaining-minute')
-  if (minuteValue !== null) {
-    const parsed = Number(minuteValue)
-    if (Number.isFinite(parsed)) {
-      perMinuteRemaining = parsed
-    }
+  const minuteValue = headers.get('X-RateLimit-PerMinute-Remaining')
+  if (minuteValue === null) {
+    return
+  }
+  const parsed = Number(minuteValue)
+  // Low quota is observed once as a finite 60s deadline, never by re-reading a stale counter.
+  if (Number.isFinite(parsed) && parsed < 3 && throttledUntil <= Date.now()) {
+    throttledUntil = Date.now() + 60_000
   }
 }
 
-// Throttle gate: pause new reads when the minute quota is nearly spent.
+// Throttle gate: pause new work only until the finite deadline set above.
 function throttleDelayMs(): number {
-  if (perMinuteRemaining !== null && perMinuteRemaining < 3) {
-    return 5_000
-  }
   const now = Date.now()
   return throttledUntil > now ? throttledUntil - now : 0
 }

@@ -17,7 +17,7 @@ import {
   beginBusinessmapMutation,
   businessmapStatusUpdate,
   clearBusinessmapInflightRequests,
-  currentBusinessmapMutationGeneration,
+  peekBusinessmapMutationGeneration,
   EMPTY_BUSINESSMAP_READ_CACHES,
   getSelectedBusinessmapSiteId,
   isCurrentBusinessmapMutation,
@@ -36,15 +36,28 @@ type BusinessmapConnectionActions = Pick<
   | 'disconnectBusinessmap'
 >
 
+function businessmapSiteIdentity(site: NonNullable<BusinessmapSlice['businessmapStatus']['sites']>[number]): string {
+  return `${site.id}::${site.subdomain}::${site.domain}::${site.displayName ?? ''}::${site.accountName ?? ''}`
+}
 function hasBusinessmapStatusChanged(
   previous: BusinessmapSlice['businessmapStatus'],
   next: BusinessmapSlice['businessmapStatus']
 ): boolean {
+  const previousSites = previous.sites ?? []
+  const nextSites = next.sites ?? []
+  const sitesChanged =
+    previousSites.length !== nextSites.length ||
+    previousSites.some((site, index) => {
+      const next = nextSites[index]
+      return next === undefined || businessmapSiteIdentity(site) !== businessmapSiteIdentity(next)
+    })
   return (
     previous.connected !== next.connected ||
+    previous.credentialError !== next.credentialError ||
     previous.viewer?.displayName !== next.viewer?.displayName ||
+    previous.viewer?.subdomain !== next.viewer?.subdomain ||
     getSelectedBusinessmapSiteId(previous) !== getSelectedBusinessmapSiteId(next) ||
-    (previous.sites?.length ?? 0) !== (next.sites?.length ?? 0)
+    sitesChanged
   )
 }
 
@@ -56,14 +69,14 @@ export function createBusinessmapConnectionActions(
     checkBusinessmapConnection: async () => {
       const contextKey = getProviderRuntimeContextKey(get().settings)
       const statusReadGeneration = nextBusinessmapStatusReadGeneration()
-      const mutationGeneration = currentBusinessmapMutationGeneration()
+      const mutationGeneration = peekBusinessmapMutationGeneration()
       if (get().businessmapStatusContextKey !== contextKey) {
         set({ businessmapStatusChecked: false })
       }
       try {
         const status = await businessmapStatus(get().settings)
         if (
-          mutationGeneration !== currentBusinessmapMutationGeneration() ||
+          mutationGeneration !== peekBusinessmapMutationGeneration() ||
           !isCurrentBusinessmapStatusRead(statusReadGeneration) ||
           getProviderRuntimeContextKey(get().settings) !== contextKey
         ) {
@@ -79,7 +92,7 @@ export function createBusinessmapConnectionActions(
         }
       } catch {
         if (
-          mutationGeneration !== currentBusinessmapMutationGeneration() ||
+          mutationGeneration !== peekBusinessmapMutationGeneration() ||
           !isCurrentBusinessmapStatusRead(statusReadGeneration) ||
           getProviderRuntimeContextKey(get().settings) !== contextKey
         ) {
@@ -181,22 +194,39 @@ export function createBusinessmapConnectionActions(
       ) {
         return
       }
+      // Why: a failed status refresh must not leave the removed connection visible.
       clearBusinessmapInflightRequests()
-      const status = await businessmapStatus(get().settings)
-      if (
-        !isCurrentBusinessmapMutation(requestGeneration) ||
-        !isCurrentBusinessmapRuntimeContext(contextKey, get().settings)
-      ) {
-        return
-      }
-      set((state) =>
-        businessmapStatusUpdate(
-          state,
-          contextKey,
-          status.connected ? status : { connected: false, viewer: null },
-          EMPTY_BUSINESSMAP_READ_CACHES
+      set((state) => ({
+        ...EMPTY_BUSINESSMAP_READ_CACHES,
+        businessmapStatus: { connected: false, viewer: null },
+        businessmapStatusChecked: false,
+        businessmapStatusContextKey: state.businessmapStatusContextKey
+      }))
+      try {
+        const status = await businessmapStatus(get().settings)
+        if (
+          !isCurrentBusinessmapMutation(requestGeneration) ||
+          !isCurrentBusinessmapRuntimeContext(contextKey, get().settings)
+        ) {
+          return
+        }
+        set((state) =>
+          businessmapStatusUpdate(
+            state,
+            contextKey,
+            status.connected ? status : { connected: false, viewer: null },
+            EMPTY_BUSINESSMAP_READ_CACHES
+          )
         )
-      )
+      } catch {
+        if (
+          !isCurrentBusinessmapMutation(requestGeneration) ||
+          !isCurrentBusinessmapRuntimeContext(contextKey, get().settings)
+        ) {
+          return
+        }
+        set((state) => businessmapStatusUpdate(state, contextKey, { connected: false, viewer: null }, EMPTY_BUSINESSMAP_READ_CACHES))
+      }
     }
   }
 }

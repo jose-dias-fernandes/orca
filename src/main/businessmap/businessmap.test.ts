@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import type * as Os from 'node:os'
 import { join } from 'node:path'
@@ -59,7 +59,7 @@ function jsonResponse(
 // oxlint-disable-next-line typescript/no-explicit-any -- SAFETY: merged module bag is test-only; cases access members dynamically.
 type BusinessmapTestModule = Record<string, any>
 
-async function loadBusinessmapModule(): Promise<BusinessmapTestModule> {
+async function loadBusinessmapModule(encryptionAvailable = false): Promise<BusinessmapTestModule> {
   vi.resetModules()
   vi.doMock('electron', () => ({
     ipcMain: { handle: handleMock },
@@ -76,9 +76,16 @@ async function loadBusinessmapModule(): Promise<BusinessmapTestModule> {
   })
   const secrets = await import('../../shared/secret-store')
   secrets.setSecretStore({
-    isEncryptionAvailable: () => false,
-    encryptString: (value) => Buffer.from(value),
-    decryptString: (value) => value.toString('utf-8'),
+    // Sealed prefix distinguishes encrypted bytes from plaintext on disk.
+    isEncryptionAvailable: () => encryptionAvailable,
+    encryptString: (value) => Buffer.from(encryptionAvailable ? `sealed:${value}` : value),
+    decryptString: (value) => {
+      const text = value.toString('utf-8')
+      if (!text.startsWith('sealed:')) {
+        throw new Error('not sealed')
+      }
+      return text.slice('sealed:'.length)
+    },
     describeProtectionGap: () => null
   })
   vi.doMock('node:os', async () => {
@@ -297,7 +304,7 @@ describe('Businessmap main backend', () => {
     const patch = netFetchMock.mock.calls.find((call) => call[1]?.method === 'PATCH')
     expect(JSON.parse(String(patch?.[1]?.body))).toMatchObject({
       column_id: 11,
-      move_reason: 'done'
+      exceeding_reason: 'done'
     })
     netFetchMock.mockResolvedValueOnce(jsonResponse({ data: { comment_id: 99 } }))
     await expect(bm.addCardComment(11, 'nice', 'site-1')).resolves.toEqual({ ok: true, id: 99 })
@@ -348,18 +355,61 @@ describe('Businessmap main backend', () => {
     expect(netFetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('throttles new work when the minute quota is nearly spent', async () => {
-    const bm = await loadBusinessmapModule()
-    writeSiteFiles('site-1', 'token-1')
+  it('connects with encryption available and restores status from disk in a fresh module', async () => {
+    const bm = await loadBusinessmapModule(true)
     netFetchMock.mockResolvedValueOnce(
-      jsonResponse({ data: [] }, 200, { 'X-RateLimit-Remaining-Minute': '1' })
+      jsonResponse({ data: { user_id: 7, realname: 'Ada', email: 'ada@x.io' } })
     )
-    await bm.listBoards('site-1')
-    // Next acquire pauses ~5s; abort instead of waiting out the throttle.
-    const controller = new AbortController()
-    const pending = bm.acquire(controller.signal)
-    controller.abort()
-    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(bm.connect({ subdomain: 'acme', apiKey: 'key-1' })).resolves.toMatchObject({
+      ok: true
+    })
+    expect(bm.getStatus()).toMatchObject({ connected: true })
+    // Site list is plaintext JSON, never a sealed blob; only per-site keys are sealed.
+    const raw = readFileSync(join(tempHome, '.orca', 'businessmap-sites.json'), 'utf-8')
+    expect(JSON.parse(raw)).toMatchObject({ sites: [{ subdomain: 'acme' }] })
+    expect(raw).not.toContain('sealed:')
+    // Fresh module graph: empty caches, same disk — status still resolves.
+    const fresh = await loadBusinessmapModule(true)
+    expect(fresh.getStatus()).toMatchObject({ connected: true })
+  })
+
+  it('throttles low quota as a finite deadline that resolves without abort', async () => {
+    const bm = await loadBusinessmapModule()
+    vi.useFakeTimers()
+    try {
+      bm.recordRateLimit(new Headers({ 'X-RateLimit-PerMinute-Remaining': '1' }))
+      let settled = false
+      const pending = bm.acquire().then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(59_000)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await pending
+      expect(settled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never extends the throttle deadline on repeated low-quota readings', async () => {
+    const bm = await loadBusinessmapModule()
+    vi.useFakeTimers()
+    try {
+      bm.recordRateLimit(new Headers({ 'x-ratelimit-perminute-remaining': '1' }))
+      await vi.advanceTimersByTimeAsync(30_000)
+      // Stale counter re-read mid-throttle must not push the deadline out.
+      bm.recordRateLimit(new Headers({ 'x-ratelimit-perminute-remaining': '0' }))
+      let settled = false
+      const pending = bm.acquire().then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(30_000)
+      await pending
+      expect(settled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('registers every businessmap:* IPC channel', async () => {
@@ -389,5 +439,54 @@ describe('Businessmap main backend', () => {
     ]) {
       expect(channels.has(channel)).toBe(true)
     }
+  })
+
+  it('resolves four concurrent creates with a cold board-tree cache', async () => {
+    const bm = await loadBusinessmapModule()
+    writeSiteFiles('site-1', 'token-1')
+    let nextId = 11
+    netFetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('/currentStructure')) {
+        return Promise.resolve(jsonResponse({ data: { workflows: { 1: { workflow_id: 1, name: 'Main' } }, columns: { 10: { column_id: 10, name: 'Todo', workflow_id: 1 } }, lanes: {} } }))
+      }
+      nextId += 1
+      return Promise.resolve(jsonResponse({ data: { card_id: nextId } }))
+    })
+    const results = await Promise.all([
+      bm.createCard({ boardId: 5, title: 'Card A', columnId: 10 }, 'site-1'),
+      bm.createCard({ boardId: 5, title: 'Card B', columnId: 10 }, 'site-1'),
+      bm.createCard({ boardId: 5, title: 'Card C', columnId: 10 }, 'site-1'),
+      bm.createCard({ boardId: 5, title: 'Card D', columnId: 10 }, 'site-1')
+    ])
+    for (const result of results) {
+      expect(result).toMatchObject({ ok: true })
+    }
+    const posts = netFetchMock.mock.calls.filter((call) => call[1]?.method === 'POST')
+    expect(posts).toHaveLength(4)
+    for (const post of posts) {
+      expect(JSON.parse(String(post?.[1]?.body))).not.toHaveProperty('board_id')
+    }
+  })
+
+  it('finds search matches beyond the first page', async () => {
+    const bm = await loadBusinessmapModule()
+    writeSiteFiles('site-1', 'token-1')
+    const card = (id: number, title: string): Record<string, unknown> => ({ card_id: id, board_id: 5, workflow_id: 1, title, column_id: 10, owner_user_id: 7, last_modified: '2026-09-21T10:00:00Z' })
+    const pageEnvelope = (page: number, rows: Record<string, unknown>[]) => jsonResponse({ data: { pagination: { current_page: page, all_pages: 2, results_per_page: 100 }, data: rows } })
+    netFetchMock.mockImplementation((url: string) => {
+      const target = String(url)
+      if (target.includes('page=2')) {
+        return Promise.resolve(pageEnvelope(2, [card(13, 'Fix late match')]))
+      }
+      if (target.includes('/users')) {
+        return Promise.resolve(jsonResponse({ data: [{ user_id: 7, realname: 'Ada' }] }))
+      }
+      if (target.includes('/currentStructure')) {
+        return Promise.resolve(jsonResponse({ data: { workflows: { 1: { workflow_id: 1, name: 'Main' } }, columns: { 10: { column_id: 10, name: 'Todo', workflow_id: 1 } }, lanes: {} } }))
+      }
+      return Promise.resolve(pageEnvelope(1, [card(11, 'Unrelated alpha'), card(12, 'Unrelated beta')]))
+    })
+    const cards = await bm.searchCards('late match', 1, 'site-1', 5)
+    expect(cards.map((entry: { id: number }) => entry.id)).toEqual([13])
   })
 })

@@ -38,8 +38,7 @@ export const CARD_FIELDS = [
   'deadline',
   'created_at',
   'last_modified',
-  'is_blocked',
-  'tag_ids'
+  'is_blocked'
 ].join(',')
 
 export type CardNameTables = {
@@ -248,7 +247,6 @@ function readAllPages(payload: unknown): number | null {
 export async function fetchCardPages(
   entry: BusinessmapClientForSite,
   base: URLSearchParams,
-  limit: number,
   boardId: number | null
 ): Promise<unknown[]> {
   const raws: unknown[] = []
@@ -268,14 +266,12 @@ export async function fetchCardPages(
     }
     const items = unwrapList(payload)
     raws.push(...items)
+    // Walk every page (up to the guard); no early stop on raws.length.
     const paging = readAllPages(payload)
     if (paging === null || page >= paging || items.length === 0) {
       break
     }
     page += 1
-    if (raws.length >= limit * 2) {
-      break
-    }
   }
   return raws
 }
